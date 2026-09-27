@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>monitor-report 演示页</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      button { margin: 4px 8px 4px 0; padding: 8px 14px; cursor: pointer; }
+      h1 { font-size: 20px; }
+      #log { white-space: pre-wrap; background: #f6f6f6; padding: 12px; font-size: 12px; min-height: 80px; }
+    </style>
+  </head>
+  <body>
+    <h1>monitor-report 演示页</h1>
+    <p>页面 URL 带 query（secret=abc123），用于验证上报体 query 脱敏。</p>
+    <div>
+      <button id="btn-js-error">触发 JS 错误</button>
+      <button id="btn-js-error2">触发另一个 JS 错误</button>
+      <button id="btn-promise">触发 Promise 拒绝</button>
+      <button id="btn-fetch-ok">fetch 200</button>
+      <button id="btn-fetch-404">fetch 404</button>
+      <button id="btn-xhr">XHR 请求</button>
+      <button id="btn-custom">自定义日志</button>
+      <button id="btn-flush">立即上报</button>
+      <button id="btn-status">刷新状态</button>
+    </div>
+    <h2>监控状态</h2>
+    <pre id="log">尚未初始化</pre>
+
+    <script src="/dist/index.global.js"></script>
+    <script>
+      var monitor = null
+
+      function log(text) {
+        document.getElementById('log').textContent += text + '\n'
+      }
+
+      window.addEventListener('DOMContentLoaded', function () {
+        monitor = window.MonitorReport.createMonitor({
+          appId: 'demo-web-001',
+          reportUrl: '/api/upload',
+          env: 'test',
+          modules: ['error', 'performance', 'network'],
+          release: 'demo-0.0.1',
+          debug: true,
+          debounceTime: 1500,
+          dedupWindow: 2000
+        })
+        monitor.setTag('page', 'demo')
+        log('初始化完成 appId=demo-web-001')
+
+        document.getElementById('btn-js-error').addEventListener('click', function () {
+          throw new Error('demo js error ' + Date.now())
+        })
+        document.getElementById('btn-js-error2').addEventListener('click', function () {
+          throw new TypeError('demo type error 固定消息供聚合')
+        })
+        document.getElementById('btn-promise').addEventListener('click', function () {
+          // 不写 catch：触发 unhandledrejection 通道
+          void Promise.reject(new Error('demo unhandled promise'))
+        })
+        document.getElementById('btn-fetch-ok').addEventListener('click', function () {
+          fetch('/api/data').catch(function () {})
+        })
+        document.getElementById('btn-fetch-404').addEventListener('click', function () {
+          fetch('/api/not-exist').catch(function () {})
+        })
+        document.getElementById('btn-xhr').addEventListener('click', function () {
+          var xhr = new XMLHttpRequest()
+          xhr.open('GET', '/api/data')
+          xhr.send()
+        })
+        document.getElementById('btn-custom').addEventListener('click', function () {
+          monitor.addReport('custom', { event: 'button_click', at: Date.now() })
+          log('已提交 custom 日志')
+        })
+        document.getElementById('btn-flush').addEventListener('click', function () {
+          monitor.flushReport()
+          log('已调用 flushReport')
+        })
+        document.getElementById('btn-status').addEventListener('click', function () {
+          log('状态: ' + JSON.stringify(monitor.getStatus()))
+        })
+        document.getElementById('btn-status').click()
+      })
+    </script>
+  </body>
+</html>

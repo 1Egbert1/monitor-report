@@ -1,0 +1,5 @@
+[
+  { "name": "core + error", "path": "dist/error.js", "limit": "8 kB" },
+  { "name": "core + performance", "path": "dist/performance.js", "limit": "8 kB" },
+  { "name": "full", "path": "dist/index.js", "limit": "18 kB" }
+]

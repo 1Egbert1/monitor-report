@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>小店商城 · monitor-report 真实项目演示</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #f3f5f7; }
+      header { background: #111827; color: #fff; padding: 12px 20px; font-size: 16px; }
+      main { max-width: 860px; margin: 20px auto; padding: 0 16px; }
+      .card { background: #fff; border-radius: 10px; padding: 16px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .product { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #eee; }
+      button { padding: 7px 12px; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; cursor: pointer; }
+      button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+      img.banner { width: 100%; max-width: 260px; height: 80px; object-fit: cover; border: 1px dashed #ccc; }
+      pre { background: #0b1220; color: #7dd3fc; padding: 12px; border-radius: 8px; font-size: 12px; min-height: 70px; white-space: pre-wrap; }
+      nav a { color: #9ca3af; margin-right: 14px; text-decoration: none; }
+      nav a.active { color: #fff; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>小店商城</strong>
+      <nav style="display:inline-block;margin-left:20px">
+        <a href="#/list">列表</a>
+        <a href="#/cart">购物车</a>
+      </nav>
+      <span id="user" style="float:right;color:#9ca3af"></span>
+    </header>
+    <main id="app">加载中…</main>
+
+    <div class="card" id="toolbox">
+      <h3 style="margin-top:0">故障注入 / 场景按钮（模拟真实线上问题）</h3>
+      <div class="row">
+        <button id="btn-slow-search">慢搜索接口(1.8s)</button>
+        <button id="btn-abort">发起请求后立即取消</button>
+        <button id="btn-broken-product">打开坏商品(接口500)</button>
+        <button id="btn-throw">组件渲染抛错</button>
+        <button id="btn-promise">未处理 Promise 拒绝</button>
+        <button id="btn-404-img">加载 404 图片</button>
+        <button id="btn-flush">立即上报</button>
+        <button id="btn-status">刷新 SDK 状态</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">页面日志</h3>
+      <pre id="log"></pre>
+    </div>
+
+    <script src="/dist/index.global.js"></script>
+    <script>
+      var monitor = null
+
+      function log(text) {
+        document.getElementById('log').textContent += text + '\n'
+      }
+
+      // ---------- 简陋 hash 路由 ----------
+      function renderRoute() {
+        var hash = location.hash || '#/list'
+        var app = document.getElementById('app')
+        if (hash.indexOf('#/detail/') === 0) {
+          renderDetail(hash.slice('#/detail/'.length))
+        } else if (hash === '#/cart') {
+          app.innerHTML = '<div class="card"><h2>购物车</h2><p>（演示占位）当前 2 件商品</p></div>'
+        } else {
+          renderList()
+        }
+      }
+
+      function renderList() {
+        var app = document.getElementById('app')
+        app.innerHTML = '<div class="card"><h2>商品列表</h2><div id="products">加载中…</div></div>'
+        fetch('/api/products')
+          .then(function (r) {
+            return r.json()
+          })
+          .then(function (res) {
+            var html = res.data
+              .map(function (p) {
+                return (
+                  '<div class="product"><span>' +
+                  p.name +
+                  '（¥' +
+                  p.price +
+                  '）</span>' +
+                  '<button class="primary" data-id="' +
+                  p.id +
+                  '">查看详情</button></div>'
+                )
+              })
+              .join('')
+            document.getElementById('products').innerHTML = html
+            var btns = document.querySelectorAll('#products [data-id]')
+            for (var i = 0; i < btns.length; i++) {
+              btns[i].addEventListener('click', function () {
+                location.hash = '#/detail/' + this.getAttribute('data-id')
+              })
+            }
+          })
+          .catch(function () {})
+      }
+
+      function renderDetail(id) {
+        var app = document.getElementById('app')
+        app.innerHTML =
+          '<div class="card"><h2>商品详情 #' + id + '</h2><div id="detail">加载中…</div></div>'
+        fetch('/api/product/' + id)
+          .then(function (r) {
+            return r.json()
+          })
+          .then(function (res) {
+            document.getElementById('detail').innerHTML =
+              '<p>' +
+              res.data.name +
+              ' ¥' +
+              res.data.price +
+              '</p>' +
+              '<button id="btn-add-cart" class="primary">加入购物车</button>'
+            document.getElementById('btn-add-cart').addEventListener('click', function () {
+              monitor.addReport('custom', { event: 'add_to_cart', productId: Number(id) })
+              log('已加入购物车（custom 上报）')
+            })
+          })
+          .catch(function () {
+            // 坏商品：接口 500 时渲染占位，同时暴露业务 UI 状态
+            document.getElementById('detail').innerHTML = '<p style="color:#b91c1c">商品加载失败（接口 500）</p>'
+          })
+      }
+
+      // ---------- SDK 接入 ----------
+      window.addEventListener('DOMContentLoaded', function () {
+        monitor = window.MonitorReport.createMonitor({
+          appId: 'store-demo-001',
+          reportUrl: '/api/upload',
+          env: 'production',
+          modules: ['error', 'performance', 'network'],
+          release: 'store-1.3.0',
+          debug: true,
+          debounceTime: 1200,
+          dedupWindow: 3000
+        })
+        monitor.setUser('user-' + Date.now().toString(36))
+        monitor.setTag('channel', 'organic')
+        document.getElementById('user').textContent = 'userId 已注入'
+        log('SDK 初始化完成 appId=store-demo-001')
+        renderRoute()
+        window.addEventListener('hashchange', function () {
+          renderRoute()
+          monitor.addReport('custom', { event: 'route_change', hash: location.hash })
+          log('路由切换: ' + location.hash)
+        })
+
+        document.getElementById('btn-slow-search').addEventListener('click', function () {
+          var t0 = performance.now()
+          fetch('/api/search?q=蓝牙')
+            .then(function (r) {
+              return r.json()
+            })
+            .then(function () {
+              log('慢搜索完成 耗时 ' + Math.round(performance.now() - t0) + 'ms')
+            })
+            .catch(function () {})
+        })
+        document.getElementById('btn-abort').addEventListener('click', function () {
+          var ctrl = new AbortController()
+          var p = fetch('/api/search?q=abc', { signal: ctrl.signal })
+          setTimeout(function () {
+            ctrl.abort() // 用户主动取消：应记为 aborted，不算失败
+            log('请求已取消（AbortController）')
+          }, 60)
+          p.catch(function () {})
+        })
+        document.getElementById('btn-broken-product').addEventListener('click', function () {
+          fetch('/api/product/3')
+            .then(function (r) {
+              log('坏商品接口状态码: ' + r.status)
+              return r.json()
+            })
+            .catch(function () {})
+        })
+        document.getElementById('btn-throw').addEventListener('click', function () {
+          throw new Error('store render crash for sku=' + Date.now())
+        })
+        document.getElementById('btn-promise').addEventListener('click', function () {
+          void Promise.reject(new Error('向购物车接口提交失败(未handled)'))
+        })
+        document.getElementById('btn-404-img').addEventListener('click', function () {
+          // 必须挂到 DOM 上：脱离 DOM 的元素其资源错误事件不会传到 window 捕获链
+          var demoBox = document.createElement('div')
+          var img = document.createElement('img')
+          img.src = '/img/missing-banner.png'
+          img.onerror = function () {
+            log('图片加载失败（resource_error 已由 SDK 捕获）')
+          }
+          demoBox.appendChild(img)
+          document.body.appendChild(demoBox)
+        })
+        document.getElementById('btn-flush').addEventListener('click', function () {
+          monitor.flushReport()
+          log('已调用 flushReport')
+        })
+        document.getElementById('btn-status').addEventListener('click', function () {
+          log('SDK 状态: ' + JSON.stringify(monitor.getStatus()))
+        })
+        document.getElementById('btn-status').click()
+      })
+    </script>
+  </body>
+</html>
