@@ -1,6 +1,6 @@
 {
   "name": "@yakult001/monitor-report",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "前端监控组件：错误 / 性能 / 网络 / 内存各维度采集与上报",
   "type": "module",
   "sideEffects": false,
@@ -47,7 +47,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "size": "size-limit",
-    "ci": "npm run lint && npm run typecheck && npm run test && npm run build && npm run size"
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "ci": "npm run lint && npm run typecheck && npm run test && npm run build && npm run verify:dist && npm run size"
   },
   "keywords": [
     "monitor",
