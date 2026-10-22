@@ -11,10 +11,25 @@
 - 数据脱敏：URL query / CSS 选择器 / 文本 PII 兜底脱敏（管道内强制执行）
 - 体积敏感：按需引入子路径，core + error 约 5.7 kB（minified + brotli）
 
+## 安装
+
+```bash
+npm install @yakult001/monitor-report
+```
+
+或通过 CDN 直接引入 UMD 产物（全局变量 `MonitorReport`）：
+
+```html
+<script src="https://unpkg.com/@yakult001/monitor-report/dist/index.global.js"></script>
+<script>
+  MonitorReport.createMonitor({ appId: 'demo', reportUrl: '/api/upload' })
+</script>
+```
+
 ## 快速开始
 
 ```ts
-import { createMonitor } from 'monitor-report'
+import { createMonitor } from '@yakult001/monitor-report'
 
 const monitor = createMonitor({
   appId: 'project-web-001',
@@ -31,10 +46,10 @@ requestIdleCallback(() => monitor.startReport())
 按需引入（体积敏感场景）：
 
 ```ts
-import { createMonitor } from 'monitor-report/error' // 仅 core + 错误采集
-import { createMonitor } from 'monitor-report/performance' // 仅 core + 性能采集
-import { createMonitor } from 'monitor-report/network' // 仅 core + 网络采集
-import { createMonitor } from 'monitor-report/memory' // 仅 core + 内存采样
+import { createMonitor } from '@yakult001/monitor-report/error' // 仅 core + 错误采集
+import { createMonitor } from '@yakult001/monitor-report/performance' // 仅 core + 性能采集
+import { createMonitor } from '@yakult001/monitor-report/network' // 仅 core + 网络采集
+import { createMonitor } from '@yakult001/monitor-report/memory' // 仅 core + 内存采样
 ```
 
 常用实例 API：
@@ -58,7 +73,7 @@ SDK 依赖浏览器全局对象，必须只在 client 侧初始化（构造函�
 
 ```ts
 // plugins/monitor.client.ts —— 只放 client 侧
-import { createMonitor } from 'monitor-report'
+import { createMonitor } from '@yakult001/monitor-report'
 
 export default defineNuxtPlugin(() => {
   const monitor = createMonitor({ appId: 'nuxt-web', reportUrl: '/api/upload' })

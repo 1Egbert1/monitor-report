@@ -1,6 +1,6 @@
 {
-  "name": "monitor-report",
-  "version": "1.0.0",
+  "name": "@yakult001/monitor-report",
+  "version": "0.1.0",
   "description": "前端监控组件：错误 / 性能 / 网络 / 内存各维度采集与上报",
   "type": "module",
   "sideEffects": false,
@@ -11,6 +11,8 @@
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "unpkg": "./dist/index.global.js",
+  "jsdelivr": "./dist/index.global.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -39,6 +41,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "prepublishOnly": "npm run ci",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --ext .ts",
     "test": "vitest run",
@@ -54,6 +57,18 @@
     "frontend"
   ],
   "license": "MIT",
+  "author": "yakult001",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/1Egbert1/monitor-report.git"
+  },
+  "homepage": "https://github.com/1Egbert1/monitor-report#readme",
+  "bugs": {
+    "url": "https://github.com/1Egbert1/monitor-report/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   },
