@@ -1,6 +1,29 @@
 // 配置合并与校验（规格书 6.2）。
-import type { ModuleType, ResolvedConfig, UserConfig } from '../contracts/config'
-import { DEFAULTS } from '../constants/defaults'
+import type {
+  ModuleType,
+  ResolvedConfig,
+  ResolvedModuleConfig,
+  UserConfig
+} from '../contracts/config'
+import { DEFAULTS, MODULE_DEFAULTS, MODULE_TYPES } from '../constants/defaults'
+
+/**
+ * 按 MODULE_DEFAULTS 的键遍历合并模块专属配置。
+ * 新增模块只需在契约层补一条映射与默认值，此处不再需要改动。
+ * @param user 用户配置
+ */
+function resolveModuleConfig(user: UserConfig): ResolvedModuleConfig {
+  const resolved: Record<string, Record<string, unknown>> = {}
+  for (const type of MODULE_TYPES) {
+    const merged = {
+      ...(MODULE_DEFAULTS[type] as Record<string, unknown>),
+      ...((user[type] as Record<string, unknown> | undefined) ?? {})
+    }
+    resolved[type] = merged
+  }
+  // 逐模块合并后结构与 ResolvedModuleConfig 等价，边界处断言一次（避免调用侧重复断言）
+  return resolved as unknown as ResolvedModuleConfig
+}
 
 /**
  * 深合并默认配置与用户配置，校验必填项，产出只读的 ResolvedConfig。
@@ -16,11 +39,9 @@ export function resolveConfig(user: UserConfig): ResolvedConfig {
 
   const modules: ModuleType[] = user.modules ? [...user.modules] : [...DEFAULTS.modules]
 
-  const sample: Record<ModuleType, number> = {
-    error: user.sample?.error ?? DEFAULTS.sample.error,
-    performance: user.sample?.performance ?? DEFAULTS.sample.performance,
-    network: user.sample?.network ?? DEFAULTS.sample.network,
-    memory: user.sample?.memory ?? DEFAULTS.sample.memory
+  const sample: Record<ModuleType, number> = {} as Record<ModuleType, number>
+  for (const type of MODULE_TYPES) {
+    sample[type] = user.sample?.[type] ?? DEFAULTS.sample[type]
   }
 
   // 自动把 reportUrl 加入 urlBlacklist，避免监控自身请求被采集形成递归。
@@ -54,19 +75,7 @@ export function resolveConfig(user: UserConfig): ResolvedConfig {
       headers: { ...(user.requestConfig?.headers ?? {}) },
       timeout: user.requestConfig?.timeout ?? DEFAULTS.requestConfig.timeout
     },
-    performance: {
-      clsReportThreshold:
-        user.performance?.clsReportThreshold ?? DEFAULTS.performance.clsReportThreshold
-    },
-    network: {
-      collectResourceTiming: user.network?.collectResourceTiming ?? DEFAULTS.network.collectResourceTiming
-    },
-    memory: {
-      interval: user.memory?.interval ?? DEFAULTS.memory.interval,
-      reportOnlyOnGrowth: user.memory?.reportOnlyOnGrowth ?? DEFAULTS.memory.reportOnlyOnGrowth,
-      growthThresholdPerMinute:
-        user.memory?.growthThresholdPerMinute ?? DEFAULTS.memory.growthThresholdPerMinute
-    },
-    debug: user.debug ?? DEFAULTS.debug
+    debug: user.debug ?? DEFAULTS.debug,
+    ...resolveModuleConfig(user)
   }
 }

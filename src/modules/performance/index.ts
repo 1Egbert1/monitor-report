@@ -1,5 +1,6 @@
 // 性能监控模块：FCP / LCP / FID / INP / CLS，终态上报（规格书 7.2）。
 import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
+import { defineModule } from '../../contracts/emitter'
 import type { LogType, PerformanceData } from '../../contracts/log'
 import { getRating } from '../../constants/thresholds'
 import { PERF_REPORT_FALLBACK_MS } from '../../constants/defaults'
@@ -248,3 +249,10 @@ function performanceTimelineNow(): number {
 export function createPerformanceMonitor(): MonitorModule {
   return new PerformanceMonitor()
 }
+
+/** 性能模块自描述：生命周期 + 以指标 startTime 作为事件起点。 */
+export const performanceModule = defineModule({
+  type: 'performance',
+  create: createPerformanceMonitor,
+  startTimeOf: (data) => data.startTime
+})

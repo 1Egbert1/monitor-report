@@ -1,11 +1,28 @@
 // 契约层：配置类型（纯类型，零逻辑）。
-import type { ReportLog } from './log'
+import type { LogType, ReportLog } from './log'
 
-/** 模块类型（可枚举的采集维度）。 */
-export type ModuleType = 'error' | 'performance' | 'network' | 'memory'
+/** 模块类型（可枚举的采集维度）：日志类型去掉 custom（自定义上报无对应模块）。 */
+export type ModuleType = Exclude<LogType, 'custom'>
+
+/**
+ * 各模块专属配置的唯一声明点（解析后的形态，字段全部有值）。
+ * 新增模块：在此加一条映射，UserConfig / ResolvedConfig / 合并逻辑同时生效。
+ */
+export interface ModuleConfigMap {
+  error: Record<string, never>
+  performance: { clsReportThreshold: number }
+  network: { collectResourceTiming: boolean }
+  memory: { interval: number; reportOnlyOnGrowth: boolean; growthThresholdPerMinute: number }
+}
+
+/** 解析后的模块配置集合。 */
+export type ResolvedModuleConfig = { [K in ModuleType]: ModuleConfigMap[K] }
+
+/** 用户可传的模块配置（逐模块全部可选）。 */
+export type UserModuleConfig = { [K in ModuleType]?: Partial<ModuleConfigMap[K]> }
 
 /** 用户可传入的配置（全部可选，appId 必填）。 */
-export interface UserConfig {
+export type UserConfig = UserModuleConfig & {
   appId: string
   reportUrl?: string
   env?: 'production' | 'development' | 'test'
@@ -26,18 +43,11 @@ export interface UserConfig {
   request?: (logs: ReportLog[]) => void | Promise<void>
   unloadRequest?: (logs: ReportLog[]) => void
   requestConfig?: { headers?: Record<string, string>; timeout?: number }
-  performance?: { clsReportThreshold?: number }
-  network?: { collectResourceTiming?: boolean }
-  memory?: {
-    interval?: number
-    reportOnlyOnGrowth?: boolean
-    growthThresholdPerMinute?: number
-  }
   debug?: boolean
 }
 
 /** 解析后的配置：所有字段已填默认值，全部只读。 */
-export interface ResolvedConfig {
+export type ResolvedConfig = Readonly<ResolvedModuleConfig> & {
   readonly appId: string
   readonly reportUrl?: string
   readonly env: 'production' | 'development' | 'test'
@@ -58,12 +68,5 @@ export interface ResolvedConfig {
   readonly request?: (logs: ReportLog[]) => void | Promise<void>
   readonly unloadRequest?: (logs: ReportLog[]) => void
   readonly requestConfig: { headers: Readonly<Record<string, string>>; timeout: number }
-  readonly performance: { clsReportThreshold: number }
-  readonly network: { collectResourceTiming: boolean }
-  readonly memory: {
-    interval: number
-    reportOnlyOnGrowth: boolean
-    growthThresholdPerMinute: number
-  }
   readonly debug: boolean
 }

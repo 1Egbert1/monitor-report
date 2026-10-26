@@ -60,7 +60,9 @@
     "test:watch": "vitest",
     "size": "size-limit",
     "verify:dist": "node scripts/verify-dist.mjs",
-    "ci": "npm run lint && npm run typecheck && npm run test && npm run build && npm run verify:dist && npm run size"
+    "ci": "npm run lint && npm run typecheck && npm run check:entries && npm run test && npm run build && npm run verify:dist && npm run size",
+    "gen:entries": "node scripts/gen-entries.mjs",
+    "check:entries": "node scripts/gen-entries.mjs --check"
   },
   "keywords": [
     "monitor",

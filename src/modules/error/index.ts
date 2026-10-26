@@ -1,7 +1,9 @@
 // 错误监控模块入口：三通道采集 + 归一化 + 计数式去重（规格书 7.1）。
 import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
+import { defineModule } from '../../contracts/emitter'
 import type { LogType } from '../../contracts/log'
 import { DEDUP_MAP_MAX } from '../../constants/defaults'
+import { matchesIgnore } from '../../utils/rules'
 import { fingerprint, type RawErrorData } from './normalize'
 import { registerErrorChannels } from './channels'
 
@@ -139,3 +141,10 @@ export class ErrorMonitor implements MonitorModule {
 export function createErrorMonitor(): MonitorModule {
   return new ErrorMonitor()
 }
+
+/** 错误模块自描述：生命周期 + 管道过滤（ignoreErrors），无 performance 事件起点。 */
+export const errorModule = defineModule({
+  type: 'error',
+  create: createErrorMonitor,
+  filter: (data, config) => matchesIgnore(data.message, config.ignoreErrors)
+})

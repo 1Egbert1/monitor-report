@@ -2,6 +2,7 @@
 import type { LogDataOf, LogType, CustomLog } from '../contracts/log'
 import type { UserConfig } from '../contracts/config'
 import type { ModuleContext, ModuleRegistry, MonitorModule } from '../contracts/emitter'
+import { behaviorsOf } from '../contracts/emitter'
 import { isBrowser } from './env'
 import { resolveConfig } from './config'
 import { ReportQueue } from './queue'
@@ -74,6 +75,8 @@ export class LogReport {
       config: this.config,
       queue: this.queue,
       counters: this.counters,
+      // 模块特化规则由注册表注入，核心不感知具体模块
+      behaviors: behaviorsOf(registry),
       getCommon: () => ({
         userId: this.userId,
         traceId: this.traceId,
@@ -159,23 +162,8 @@ export class LogReport {
     const items = this.rawQueue
     this.rawQueue = []
     for (const item of items) {
-      switch (item.type) {
-        case 'error':
-          this.pipeline.process('error', item.data)
-          break
-        case 'performance':
-          this.pipeline.process('performance', item.data)
-          break
-        case 'network':
-          this.pipeline.process('network', item.data)
-          break
-        case 'memory':
-          this.pipeline.process('memory', item.data)
-          break
-        case 'custom':
-          this.pipeline.process('custom', item.data)
-          break
-      }
+      // 直接传原始对，避免按类型写 switch（新增模块无需改动此处）
+      this.pipeline.process(item)
     }
     this.scheduler.notifyAdded()
   }
@@ -244,9 +232,9 @@ export class LogReport {
    */
   private startModules(registry: ModuleRegistry): void {
     for (const type of this.config.modules) {
-      const factory = registry[type]
-      if (!factory) continue
-      const mod = factory()
+      const descriptor = registry[type]
+      if (!descriptor) continue
+      const mod = descriptor.create()
       this.startedModules.push(mod)
       mod.start(this.createModuleContext())
     }

@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pipeline, type PipelineDeps, type QueuedRaw } from '../../src/core/pipeline'
 import { ReportQueue } from '../../src/core/queue'
 import { resolveConfig } from '../../src/core/config'
+import { behaviorsOf } from '../../src/contracts/emitter'
+import { errorModule } from '../../src/modules/error'
+import { networkModule } from '../../src/modules/network'
 import type { UserConfig } from '../../src/contracts/config'
 import type { CustomLog, ErrorData, NetworkLog, ReportLog } from '../../src/contracts/log'
 
@@ -43,6 +46,8 @@ function build(user: Partial<UserConfig> = {}) {
     config,
     queue,
     counters,
+    // 规则过滤由模块声明提供，这里用真实模块的 behavior 覆盖 ignoreErrors / urlBlacklist 路径
+    behaviors: behaviorsOf({ error: errorModule, network: networkModule }),
     getCommon: () => ({ tags: {}, extra: {} }),
     getPageSnapshot: () => ({ url: 'https://example.com/p?a=secret1', path: '/p' }),
     getNavigationType: () => 'navigate',

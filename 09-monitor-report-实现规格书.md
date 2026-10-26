@@ -101,68 +101,72 @@ prettier  husky  lint-staged  @changesets/cli
 
 ## 3. 目录结构（逐文件职责）
 
+按「能力」而非「技术角色」组织：一个采集维度的实现、声明、规则、入口都在同一个目录/文件内，
+`core/` 不出现任何具体模块名。
+
 ```
 monitor-report/
 ├── src/
-│   ├── contracts/                      # 契约层：只有类型与接口，零逻辑
-│   │   ├── log.ts                      # ReportLog 联合类型 + 各维度 data 类型
-│   │   ├── config.ts                   # UserConfig / ResolvedConfig
-│   │   ├── emitter.ts                  # ReportEmitter、ModuleContext、MonitorModule
+│   ├── contracts/                      # 契约层：类型为主，仅 emitter 含 defineModule/behaviorsOf
+│   │   ├── log.ts                      # LogDataMap（类型→数据的唯一映射）+ LogBase
+│   │   ├── config.ts                   # ModuleConfigMap / UserConfig / ResolvedConfig
+│   │   ├── emitter.ts                  # ModuleDescriptor、defineModule、ModuleRegistry
 │   │   └── index.ts
 │   ├── constants/
-│   │   ├── defaults.ts                 # 默认配置（见 5.1）
+│   │   ├── defaults.ts                 # MODULE_DEFAULTS（模块默认值唯一来源）+ 其他常量
 │   │   ├── thresholds.ts               # Web Vitals 评级阈值（见 5.2）
 │   │   └── version.ts                  # sdkVersion / schemaVersion（构建期注入）
-│   ├── core/
+│   ├── core/                           # 与业务无关的管道：不得出现任何具体模块名
 │   │   ├── LogReport.ts                # 核心主类（唯一状态持有者）
 │   │   ├── env.ts                      # isBrowser() / isSupported()
-│   │   ├── config.ts                   # 配置合并与校验
-│   │   ├── pipeline.ts                 # 过滤 → 公共字段 → 脱敏 → 限额
+│   │   ├── config.ts                   # 配置合并与校验（按 MODULE_DEFAULTS 键遍历）
+│   │   ├── pipeline.ts                 # 采样 → 开关 → 模块钩子过滤 → 公共字段 → 脱敏 → 限额
 │   │   ├── queue.ts                    # 缓存队列 + 上限丢弃 + droppedCount
 │   │   ├── scheduler.ts                # 防抖 + flush + 失败回塞 + 卸载兜底
 │   │   ├── transport.ts                # fetch / keepalive / sendBeacon 降级
-│   │   ├── singleton.ts                # 重复注入保护
-│   │   └── registry.ts                 # ModuleRegistry 类型与构造函数
-│   ├── modules/
+│   │   └── singleton.ts                # 重复注入保护
+│   ├── modules/                        # 一个模块 = 一个目录 + 一份自描述描述符
+│   │   ├── manifest.ts                 # ALL_MODULES / FULL_REGISTRY（全量清单，唯一装配点）
 │   │   ├── error/
-│   │   │   ├── index.ts                # createErrorMonitor()
+│   │   │   ├── index.ts                # createErrorMonitor() + errorModule 描述符
 │   │   │   ├── channels.ts             # 三通道监听与解绑
 │   │   │   ├── normalize.ts            # 错误归一化与指纹
 │   │   │   └── selector.ts             # 元素选择器生成（脱敏）
 │   │   ├── performance/
-│   │   │   ├── index.ts                # createPerformanceMonitor()
+│   │   │   ├── index.ts                # createPerformanceMonitor() + performanceModule
 │   │   │   ├── observers.ts            # 各指标 Observer 配置表
 │   │   │   ├── lcp.ts                  # LCP 终值状态机
 │   │   │   ├── cls.ts                  # CLS 会话窗口
 │   │   │   └── inp.ts                  # INP 分位计算
 │   │   ├── network/
-│   │   │   ├── index.ts                # createNetworkMonitor()
+│   │   │   ├── index.ts                # createNetworkMonitor() + networkModule
 │   │   │   ├── fetch.ts                # fetch 包装
-│   │   │   └── xhr.ts                  # XHR 包装
+│   │   │   ├── xhr.ts                  # XHR 包装
+│   │   │   └── status.ts               # 状态码语义分类（classifyNetworkOutcome）
 │   │   └── memory/
-│   │       └── index.ts                # createMemoryMonitor()
+│   │       └── index.ts                # createMemoryMonitor() + memoryModule
 │   ├── plugins/
 │   │   ├── vue2.ts
 │   │   └── vue3.ts
 │   ├── utils/
 │   │   ├── mask.ts                     # 脱敏器（D-08）
 │   │   ├── hash.ts                     # 稳定指纹
+│   │   ├── rules.ts                    # ignoreErrors / urlBlacklist 匹配（供模块声明复用）
 │   │   ├── debounce.ts
 │   │   ├── time.ts                     # 时间戳 / timeOrigin 校正
 │   │   └── once.ts
-│   ├── entries/
-│   │   ├── full.ts                     # 全部模块注册表
-│   │   ├── error.ts                    # 仅 error + core
-│   │   ├── performance.ts
-│   │   ├── network.ts
-│   │   └── memory.ts
-│   ├── index.ts                        # 全量入口：createMonitor()
-│   ├── error.ts                        # 子路径入口
+│   ├── index.ts                        # 全量入口：createMonitor() + FULL_REGISTRY
+│   ├── error.ts                        # 子路径入口：入口与注册表同文件（不再有 entries/ 层）
 │   ├── performance.ts
 │   ├── network.ts
 │   └── memory.ts
+├── scripts/
+│   ├── entries.mjs                     # 公开入口唯一定义处（tsup 与 package.json#exports 共用）
+│   ├── gen-entries.mjs                 # 由 entries.mjs 生成 exports，--check 供 ci 校验漂移
+│   └── verify-dist.mjs                 # 产物完整性校验（exports 目标 + chunk 引用）
 ├── tests/
 │   ├── setup.ts                        # 全局 mock（PerformanceObserver / fetch / XHR）
+│   ├── helpers/distBuild.ts            # 构建锁：并行测试文件串行化 tsup，避免写坏 dist
 │   ├── unit/…                          # 与被测模块一一对应
 │   └── acceptance/…                    # 第 12 章验收用例
 ├── package.json
@@ -178,15 +182,46 @@ monitor-report/
 
 ```mermaid
 flowchart TD
-    E["entries<br/>模块注册表"] --> C["core<br/>核心调度"]
+    E["入口<br/>index / error / performance / network / memory"] --> R["modules/manifest<br/>ALL_MODULES 清单"]
+    E --> C["core<br/>核心调度"]
     C --> K["contracts<br/>契约层"]
-    M["modules<br/>采集模块"] --> K
+    M["modules 各模块<br/>工厂 + 描述符"] --> K
     C -->|"注入 ModuleContext<br/>含 emit 回调"| M
     U["utils"] --> K
-    E --> M
+    R --> M
 ```
 
-规则：`modules/*` **不得** import `core/*`；`core/*` **不得** import `modules/*`（只认 `ModuleRegistry` 接口）。`contracts/*` 不 import 任何内部模块。
+规则：
+
+- `modules/*` **不得** import `core/*`；`core/*` **不得** import `modules/*`（只认 `ModuleRegistry` / `ModuleBehavior` 接口）。
+- `contracts/*` 不 import 任何内部模块。
+- 子路径入口**不得** import `modules/manifest`（否则全量模块会被打进按需包，破坏 tree-shaking）。
+- `core/` 内不得出现具体模块名字符串：过滤规则与事件起点由描述符提供。
+
+### 3.1 模块自描述（ModuleDescriptor）
+
+每个模块在自己的 `index.ts` 导出一份描述符，把「生命周期 + 管道钩子」声明在一处：
+
+```ts
+export const networkModule = defineModule({
+  type: 'network',
+  create: createNetworkMonitor,
+  filter: (data, config) => matchesBlacklist(data.reqUrl, config.urlBlacklist),
+  startTimeOf: (data) => data.reqStartTime
+})
+```
+
+核心侧只消费 `ModuleRegistry` 与 `behaviorsOf(registry)`，因此管道里不再有 `if (type === 'network')` 这类分支。
+
+**新增一个采集维度需要改的地方（全部是声明，漏改会有编译错误）**
+
+| # | 位置 | 改动 |
+| --- | --- | --- |
+| 1 | `contracts/log.ts` | `LogDataMap` 加一行（`LogType` / `ReportLog` / `LogDataOf` 自动派生） |
+| 2 | `contracts/config.ts` | `ModuleConfigMap` 加一行（无专属配置写 `Record<string, never>`） |
+| 3 | `constants/defaults.ts` | `MODULE_DEFAULTS` 加一行（合并逻辑自动遍历） |
+| 4 | `modules/<name>/index.ts` + `modules/manifest.ts` | 导出描述符并加入 `ALL_MODULES` |
+| 5（可选） | `scripts/entries.mjs` | 需要独立子路径时加一行，再执行 `npm run gen:entries` |
 
 ---
 
@@ -195,7 +230,18 @@ flowchart TD
 `src/contracts/log.ts`
 
 ```ts
-export type LogType = 'error' | 'performance' | 'network' | 'memory' | 'custom'
+// 类型 → 数据的唯一映射表：新增维度只加一行，LogType / LogDataOf / ReportLog 全部自动派生
+export interface LogDataMap {
+  error: ErrorData
+  performance: PerformanceData
+  network: NetworkData
+  memory: MemoryData
+  custom: Record<string, unknown>
+}
+export type LogType = keyof LogDataMap
+export type LogDataOf<T extends LogType> = LogDataMap[T]
+export type LogOf<T extends LogType> = LogBase & { type: T; data: LogDataMap[T] }
+export type ReportLog = { [K in LogType]: LogOf<K> }[LogType]
 
 export interface LogBase {
   appId: string
@@ -313,7 +359,22 @@ export interface MonitorModule {
 }
 
 export type ModuleFactory = () => MonitorModule
-export type ModuleRegistry = Partial<Record<LogType, ModuleFactory>>
+
+// 模块自描述：生命周期 + 管道钩子（data 按模块收窄，擦除只发生在 defineModule 内）
+export interface ModuleDeclaration<T extends ModuleType> {
+  readonly type: T
+  readonly create: ModuleFactory
+  readonly filter?: (data: LogDataOf<T>, config: ResolvedConfig) => boolean
+  readonly startTimeOf?: (data: LogDataOf<T>) => number
+}
+export interface ModuleDescriptor extends ModuleBehavior {
+  readonly type: ModuleType
+  readonly create: ModuleFactory
+}
+export function defineModule<T extends ModuleType>(decl: ModuleDeclaration<T>): ModuleDescriptor
+
+export type ModuleRegistry = Partial<Record<ModuleType, ModuleDescriptor>>
+export function behaviorsOf(registry: ModuleRegistry): Partial<Record<LogType, ModuleBehavior>>
 ```
 
 `src/contracts/config.ts`
@@ -784,7 +845,7 @@ README 必须包含一节「接入方责任」，明确：`extra` / `tags` / `cu
     "test": "vitest run",
     "test:watch": "vitest",
     "size": "size-limit",
-    "ci": "npm run lint && npm run typecheck && npm run test && npm run build && npm run size"
+    "ci": "npm run lint && npm run typecheck && npm run check:entries && npm run test && npm run build && npm run verify:dist && npm run size"
   }
 }
 ```
@@ -794,14 +855,11 @@ README 必须包含一节「接入方责任」，明确：`extra` / `tags` / `cu
 ### 10.2 `tsup.config.ts`
 
 ```ts
+import { ENTRIES } from './scripts/entries.mjs'
+
 export default defineConfig({
-  entry: {
-    index: 'src/index.ts',
-    error: 'src/error.ts',
-    performance: 'src/performance.ts',
-    network: 'src/network.ts',
-    memory: 'src/memory.ts'
-  },
+  // 入口清单来自 scripts/entries.mjs，与 package.json#exports 共用同一份声明
+  entry: ENTRIES,
   format: ['esm', 'cjs', 'iife'],
   globalName: 'MonitorReport',
   dts: true,

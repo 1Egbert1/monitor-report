@@ -1,7 +1,7 @@
 // 全量入口：createMonitor()（组装全部模块 + 单例去重保护）。
 import { LogReport } from './core/LogReport'
 import { createSingleton } from './core/singleton'
-import { fullRegistry } from './entries/full'
+import { FULL_REGISTRY } from './modules/manifest'
 import type { UserConfig } from './contracts/config'
 
 /**
@@ -9,7 +9,7 @@ import type { UserConfig } from './contracts/config'
  * @param config 用户配置
  */
 export function createMonitor(config: UserConfig): LogReport {
-  return createSingleton(() => new LogReport(config, fullRegistry))
+  return createSingleton(() => new LogReport(config, FULL_REGISTRY))
 }
 
 export { LogReport }

@@ -1,11 +1,11 @@
 // 子路径入口：monitor-report/memory（仅 core + 内存采样）。
 import { LogReport } from './core/LogReport'
 import { createSingleton } from './core/singleton'
-import { memoryRegistry } from './entries/memory'
+import { memoryModule } from './modules/memory'
 import type { UserConfig } from './contracts/config'
 import type { ModuleRegistry } from './contracts/emitter'
 
-const registry: ModuleRegistry = memoryRegistry
+const registry: ModuleRegistry = { memory: memoryModule }
 
 /**
  * 创建仅含内存采样的监控实例。

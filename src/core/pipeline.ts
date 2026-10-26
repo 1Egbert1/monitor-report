@@ -1,14 +1,8 @@
 // 数据管道（规格书 6.3）：采样 → 类型开关 → 规则过滤 → 公共字段 → 脱敏 → beforeSend → 入队。
-// 处理顺序固定，不得调整。
-import type {
-  LogBase,
-  LogDataOf,
-  LogType,
-  NetworkData,
-  PerformanceData,
-  ReportLog
-} from '../contracts/log'
+// 处理顺序固定，不得调整。模块特化规则由注册表注入的 behaviors 提供，核心不出现具体模块名。
+import type { LogBase, LogDataOf, LogType, ReportLog } from '../contracts/log'
 import type { ModuleType, ResolvedConfig } from '../contracts/config'
+import type { ModuleBehavior } from '../contracts/emitter'
 import type { NavigationType } from '../utils/time'
 import { correctedNow } from '../utils/time'
 import { maskLog, containsPii } from '../utils/mask'
@@ -56,6 +50,8 @@ export interface PipelineDeps {
   config: ResolvedConfig
   queue: ReportQueue
   counters: RuntimeCounters
+  /** 模块声明的管道行为（规则过滤 / 事件起点），键与日志类型对应。 */
+  behaviors: Partial<Record<LogType, ModuleBehavior>>
   getCommon(): CommonContext
   getPageSnapshot(): PageSnapshot
   getNavigationType(): NavigationType
@@ -103,10 +99,19 @@ export class Pipeline {
 
   /**
    * 处理一条原始数据并按序走完管道。
+   * 重放场景（lazyReport 缓存项）直接传整条原始对，避免调用侧按类型写 switch。
+   * @param raw 原始数据对
+   */
+  process(raw: QueuedRaw): void
+  /**
+   * 处理一条原始数据并按序走完管道。
    * @param type 日志类型
    * @param data 数据类型化数据
    */
-  process<T extends LogType>(type: T, data: LogDataOf<T>): void {
+  process<T extends LogType>(type: T, data: LogDataOf<T>): void
+  process<T extends LogType>(typeOrRaw: T | QueuedRaw, data?: LogDataOf<T>): void {
+    const raw = (typeof typeOrRaw === 'string' ? { type: typeOrRaw, data } : typeOrRaw) as QueuedRaw
+    const { type, data: payload } = raw
     const { config } = this.deps
 
     // 1 采样判定
@@ -124,18 +129,12 @@ export class Pipeline {
       return
     }
 
-    // 3 规则过滤
-    if (type === 'error') {
-      const message = (data as { message: string }).message
-      if (matchesIgnore(message, config.ignoreErrors)) return
-    }
-    if (type === 'network') {
-      const reqUrl = (data as NetworkData).reqUrl
-      if (matchesBlacklist(reqUrl, config.urlBlacklist)) return
-    }
+    // 3 规则过滤（模块自带：error 走 ignoreErrors、network 走 urlBlacklist，核心无需感知）
+    const behavior = this.deps.behaviors[type]
+    if (behavior?.filter?.(payload, config)) return
 
     // 4 补全公共字段（pageUrl 在此刻快照）
-    const log = this.buildLog(type, data)
+    const log = this.buildLog(type, payload)
 
     // 5 脱敏（不可跳过）
     const masked = maskLog(log, config.maskQueryKeys)
@@ -150,7 +149,7 @@ export class Pipeline {
 
     // 7 入队（lazyReport 时缓存原始对，等 startReport 重走管道）
     if (config.lazyReport && this.deps.lazyPush) {
-      this.deps.lazyPush({ type, data } as QueuedRaw)
+      this.deps.lazyPush(raw)
       return
     }
     this.deps.queue.add(out)
@@ -187,37 +186,13 @@ export class Pipeline {
 
   /**
    * 取该类型日志对应的 performance 事件起点（用于 timeOrigin 校正）。
+   * 由模块描述符声明，未声明者取 0（校正退化为相对 timeOrigin 的偏移）。
    * @param type 日志类型
    * @param data 数据类型化数据
    */
   private entryStartOf<T extends LogType>(type: T, data: LogDataOf<T>): number {
-    if (type === 'performance') return (data as PerformanceData).startTime
-    if (type === 'network') return (data as NetworkData).reqStartTime
-    // SPEC-GAP: 错误/内存/自定义日志无 PerformanceEntry，startTime 取 0（校正退化为相对 timeOrigin 的偏移）。
-    return 0
+    return this.deps.behaviors[type]?.startTimeOf?.(data) ?? 0
   }
-}
-
-/**
- * ignoreErrors 命中判定：string 子串匹配，RegExp 匹配（重置 lastIndex）。
- * @param message 错误消息
- * @param rules 忽略规则
- */
-function matchesIgnore(message: string, rules: readonly (string | RegExp)[]): boolean {
-  return rules.some((rule) => {
-    if (typeof rule === 'string') return message.includes(rule)
-    rule.lastIndex = 0
-    return rule.test(message)
-  })
-}
-
-/**
- * urlBlacklist 命中判定（子串匹配）。
- * @param url 请求地址
- * @param blacklist 黑名单
- */
-function matchesBlacklist(url: string, blacklist: readonly string[]): boolean {
-  return blacklist.some((item) => url.includes(item))
 }
 
 /**

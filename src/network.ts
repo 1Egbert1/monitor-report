@@ -1,11 +1,11 @@
 // 子路径入口：monitor-report/network（仅 core + 网络采集）。
 import { LogReport } from './core/LogReport'
 import { createSingleton } from './core/singleton'
-import { networkRegistry } from './entries/network'
+import { networkModule } from './modules/network'
 import type { UserConfig } from './contracts/config'
 import type { ModuleRegistry } from './contracts/emitter'
 
-const registry: ModuleRegistry = networkRegistry
+const registry: ModuleRegistry = { network: networkModule }
 
 /**
  * 创建仅含网络采集的监控实例。

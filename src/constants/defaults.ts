@@ -1,38 +1,48 @@
 // 默认配置（见规格书 5.1）与其他常量（见规格书 5.3）。
-import type { ModuleType } from '../contracts/config'
+import type { ModuleType, ResolvedModuleConfig } from '../contracts/config'
 
 /** 默认模块开关：网络与内存默认关闭（噪音与兼容性考虑）。 */
 const DEFAULT_MODULES: ModuleType[] = ['error', 'performance']
 
-/** 默认采样率：全量。 */
-const DEFAULT_SAMPLE: Record<ModuleType, number> = {
-  error: 1,
-  performance: 1,
-  network: 1,
-  memory: 1
-}
-
-/** 默认配置对象（深层只读）。 */
-export const DEFAULTS = Object.freeze({
-  env: 'production',
-  modules: Object.freeze(DEFAULT_MODULES),
-  sample: Object.freeze(DEFAULT_SAMPLE),
-  debounceTime: 1000,
-  maxLogsPerPage: 300,
-  lazyReport: false,
-  urlBlacklist: Object.freeze([]),
-  ignoreErrors: Object.freeze([]),
-  dedupWindow: 5000,
-  maskQueryKeys: Object.freeze([]),
-  reportPerformanceOnHiddenOnly: true,
-  requestConfig: Object.freeze({ headers: Object.freeze({}), timeout: 10000 }),
+/**
+ * 各模块默认配置：模块专属配置的唯一默认值来源。
+ * 合并逻辑按此对象的键遍历，新增模块无需改 core/config.ts。
+ */
+export const MODULE_DEFAULTS: Readonly<ResolvedModuleConfig> = Object.freeze({
+  error: Object.freeze({}),
   performance: Object.freeze({ clsReportThreshold: 0 }),
   network: Object.freeze({ collectResourceTiming: false }),
   memory: Object.freeze({
     interval: 30000,
     reportOnlyOnGrowth: true,
     growthThresholdPerMinute: 3145728
-  }),
+  })
+}) as Readonly<ResolvedModuleConfig>
+
+/** 全部模块类型（由 MODULE_DEFAULTS 的键推导，不再单独维护列表）。 */
+export const MODULE_TYPES = Object.freeze(
+  Object.keys(MODULE_DEFAULTS) as ModuleType[]
+) as readonly ModuleType[]
+
+/** 默认采样率：全量。 */
+const DEFAULT_SAMPLE = Object.freeze(
+  Object.fromEntries(MODULE_TYPES.map((type) => [type, 1]))
+) as Readonly<Record<ModuleType, number>>
+
+/** 默认配置对象（深层只读）。 */
+export const DEFAULTS = Object.freeze({
+  env: 'production',
+  modules: Object.freeze(DEFAULT_MODULES),
+  sample: DEFAULT_SAMPLE,
+  debounceTime: 1000,
+  maxLogsPerPage: 300,
+  lazyReport: false,
+  urlBlacklist: Object.freeze([]) as readonly string[],
+  ignoreErrors: Object.freeze([]) as readonly (string | RegExp)[],
+  dedupWindow: 5000,
+  maskQueryKeys: Object.freeze([]) as readonly string[],
+  reportPerformanceOnHiddenOnly: true,
+  requestConfig: Object.freeze({ headers: Object.freeze({}), timeout: 10000 }),
   debug: false
 } as const)
 

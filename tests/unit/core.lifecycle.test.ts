@@ -1,7 +1,7 @@
 // 生命周期测试（规格书第 11 章 core.lifecycle.test.ts 断言矩阵）。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { LogReport } from '../../src/core/LogReport'
-import type { MonitorModule } from '../../src/contracts/emitter'
+import { defineModule, type MonitorModule } from '../../src/contracts/emitter'
 import type { LogType } from '../../src/contracts/log'
 
 /** 构造一个检测清理行为的假模块。 */
@@ -48,7 +48,7 @@ describe('LogReport 生命周期', () => {
 
     const monitor = new LogReport(
       { appId: 'a', reportUrl: 'https://r.example.com/u', modules: ['error'] },
-      { error: () => mod }
+      { error: defineModule({ type: 'error', create: () => mod }) }
     )
     monitor.addReport('custom', { n: 1 }) // 触发防抖定时器
     expect(vi.getTimerCount()).toBeGreaterThan(0)

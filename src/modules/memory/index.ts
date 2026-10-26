@@ -3,6 +3,7 @@
 // 只覆盖 JS 堆（usedJSHeapSize 等），不含 DOM / CSS / GPU / Worker。
 // 本模块只进 monitor-report/memory 子路径，不进全量入口的默认 modules。
 import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
+import { defineModule } from '../../contracts/emitter'
 import type { LogType } from '../../contracts/log'
 
 /** performance.memory 结构（Chromium 专有）。 */
@@ -173,3 +174,9 @@ function computeGrowth(samples: Sample[]): number | null {
 export function createMemoryMonitor(): MonitorModule {
   return new MemoryMonitor()
 }
+
+/** 内存模块自描述：生命周期（无过滤与事件起点）。 */
+export const memoryModule = defineModule({
+  type: 'memory',
+  create: createMemoryMonitor
+})
