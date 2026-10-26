@@ -61,6 +61,36 @@ describe('registerErrorChannels', () => {
     expect(captured.length).toBe(1)
   })
 
+  it('非资源标签的 error 事件不进资源通道（白名单拦截）', () => {
+    register()
+    const div = document.createElement('div')
+    document.body.appendChild(div)
+    div.dispatchEvent(new Event('error'))
+    expect(captured.length).toBe(0)
+    div.remove()
+  })
+
+  it('自定义元素手动派发 error 不被误判为资源错误', () => {
+    register()
+    const custom = document.createElement('my-widget')
+    document.body.appendChild(custom)
+    custom.dispatchEvent(new Event('error'))
+    expect(captured.length).toBe(0)
+    custom.remove()
+  })
+
+  it('白名单内的 script 标签正常上报，resourceType 为小写标签名', () => {
+    register()
+    // 不设 src：避免 happy-dom 真的发起请求，导致额外产生一次失败事件
+    const script = document.createElement('script')
+    document.body.appendChild(script)
+    script.dispatchEvent(new Event('error'))
+    expect(captured.length).toBe(1)
+    expect(captured[0]?.errorType).toBe('resource_error')
+    expect(captured[0]?.resourceType).toBe('script')
+    script.remove()
+  })
+
   it('Promise 未处理拒绝通道产出 errorType=promise_error', () => {
     register()
     const ev = new Event('unhandledrejection')

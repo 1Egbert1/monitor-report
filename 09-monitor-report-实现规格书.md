@@ -586,8 +586,16 @@ flowchart LR
 | 通道 | 注册方式 | 采集范围 | 关键约束 |
 | --- | --- | --- | --- |
 | 同步 JS 错误 | `window.addEventListener('error', h)` | 运行时错误、语法错误 | **禁止 `window.onerror = h`**；`e.error` 可能为 `null`，需空值保护 |
-| 资源加载失败 | `window.addEventListener('error', h2, true)` | img / script / link / css / audio / video | **必须传第三参 `true`**（资源错误不冒泡）；用 `e.target` 区分资源与 JS：`e.target instanceof HTMLElement && e.target !== window` 判为资源错误 |
+| 资源加载失败 | `window.addEventListener('error', h2, true)` | img / script / link / css / audio / video | **必须传第三参 `true`**（资源错误不冒泡）；判定规则见下方「资源错误判定」 |
 | Promise 未处理拒绝 | `window.addEventListener('unhandledrejection', h3)` 与 `rejectionhandled` | reject 无 catch | `rejectionhandled` 用于给"事后补 catch"的事件打标，**不得当作新错误上报** |
+
+**资源错误判定（顺序不可调整）**
+
+1. **用 `target.nodeType === 1` 判元素**，不用 `target instanceof Element`：跨 realm（iframe / 其他 document）时构造函数不同源，`instanceof` 会失效并静默丢弃事件。
+2. **标签白名单**：`img` / `script` / `link` / `video` / `audio` / `source` / `track` / `input`。未命中直接 return —— 业务代码手动 `dispatchEvent(new Event('error'))`、自定义元素抛出的 error 不得记为资源错误。
+   - `iframe` 不列入：浏览器不会为 iframe 加载失败派发 `error` 事件。
+3. **标签名归一化**：`(el.localName || el.tagName).toLowerCase()`。`localName` 去命名空间前缀（`svg:image` → `image`），`toLowerCase` 兼容 XML 文档（其中 `localName` 不保证小写）。
+4. `resourceUrl` 取 `currentSrc || src || href`（媒体元素优先 `currentSrc`）。
 
 **归一化与指纹（`normalize.ts`）**
 

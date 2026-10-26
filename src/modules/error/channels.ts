@@ -12,6 +12,32 @@ export interface ErrorChannelsOpts {
 const handledRejections = new WeakSet<object>()
 
 /**
+ * 会产生资源加载失败 error 事件的标签白名单。
+ * 只有命中这些标签才记 resource_error —— 业务代码手动 dispatchEvent(new Event('error'))
+ * 或自定义元素抛出的 error 不应被误判成资源加载失败。
+ * iframe 未列入：浏览器不会为它的加载失败派发 error 事件。
+ */
+const RESOURCE_TAGS = new Set([
+  'img',
+  'script',
+  'link',
+  'video',
+  'audio',
+  'source',
+  'track',
+  'input'
+])
+
+/**
+ * 取归一化的标签名：localName 去命名空间前缀（svg:image → image），
+ * toLowerCase 兼容 XML 文档（其中 localName 不保证小写）。
+ * @param el 目标元素
+ */
+function tagOf(el: Element): string {
+  return (el.localName || el.tagName || '').toLowerCase()
+}
+
+/**
  * 注册三条错误采集通道，返回解绑函数（幂等）。
  * @param opts 归一化数据回调
  */
@@ -43,15 +69,18 @@ export function registerErrorChannels(opts: ErrorChannelsOpts): () => void {
   }
 
   const onResourceError = (e: Event): void => {
-    const target = e.target
+    const target = e.target as Node | null
     // capture 阶段收到的 JS 错误 target 为 window；元素类目标才是资源错误。
-    if (!(target instanceof Element)) return
-    const el = target as HTMLElement & { src?: string; href?: string }
+    // 用 nodeType 而非 instanceof Element：跨 realm（iframe / 其他 document）时后者的构造函数不同源，会误判。
+    if (!target || target.nodeType !== 1) return
+    const el = target as Element & { src?: string; href?: string; currentSrc?: string }
+    const tag = tagOf(el)
+    if (!RESOURCE_TAGS.has(tag)) return
     opts.onError({
       errorType: 'resource_error',
-      message: `resource load error: ${el.tagName.toLowerCase()}`,
-      resourceUrl: (el as HTMLMediaElement).currentSrc || el.src || el.href || undefined,
-      resourceType: el.tagName.toLowerCase(),
+      message: `resource load error: ${tag}`,
+      resourceUrl: el.currentSrc || el.src || el.href || undefined,
+      resourceType: tag,
       selector: nodeSelector(el)
     })
   }
