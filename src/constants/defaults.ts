@@ -1,5 +1,6 @@
 // 默认配置（见规格书 5.1）与其他常量（见规格书 5.3）。
 import type { ModuleType, ResolvedModuleConfig } from '../contracts/config'
+import type { LogLevel, LogType } from '../contracts/log'
 
 /** 默认模块开关：网络与内存默认关闭（噪音与兼容性考虑）。 */
 const DEFAULT_MODULES: ModuleType[] = ['error', 'performance']
@@ -48,6 +49,18 @@ export const DEFAULTS = Object.freeze({
 
 /** 错误去重表条目上限，超出按 LRU 淘汰。 */
 export const DEDUP_MAP_MAX = 200
+
+/**
+ * 各日志类型的默认严重级别：模块未声明 levelOf 时的兜底。
+ * 语义对齐 Sentry 的 event level（fatal/error/warning/info/debug）。
+ */
+export const DEFAULT_LEVEL_BY_TYPE: Readonly<Record<LogType, LogLevel>> = Object.freeze({
+  error: 'error',
+  performance: 'info',
+  network: 'info',
+  memory: 'info',
+  custom: 'info'
+})
 
 /** 堆栈截断帧数。 */
 export const STACK_MAX_FRAMES = 10

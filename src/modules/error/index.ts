@@ -1,7 +1,7 @@
 // 错误监控模块入口：三通道采集 + 归一化 + 计数式去重（规格书 7.1）。
 import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
 import { defineModule } from '../../contracts/emitter'
-import type { LogType } from '../../contracts/log'
+import type { ErrorData, LogLevel, LogType } from '../../contracts/log'
 import { DEDUP_MAP_MAX } from '../../constants/defaults'
 import { matchesIgnore } from '../../utils/rules'
 import { fingerprint, type RawErrorData } from './normalize'
@@ -142,9 +142,31 @@ export function createErrorMonitor(): MonitorModule {
   return new ErrorMonitor()
 }
 
-/** 错误模块自描述：生命周期 + 管道过滤（ignoreErrors），无 performance 事件起点。 */
+/** chunk / 动态 import 加载失败的正则：这类错误几乎必然导致页面功能不可用，升为 fatal。 */
+const CHUNK_LOAD_FAIL_RE = /Loading chunk .* failed|ChunkLoadError|Importing a module script failed/i
+
+/**
+ * 错误严重级别（对齐 Sentry 的 event level）。
+ * 规则是确定性的，不需要业务方标注：
+ * - 资源错误：script 失败按 error（会导致后续功能不可用），其他标签按 warning
+ * - JS 错误：chunk 加载失败升 fatal，其余 error
+ * - Promise / Vue：error
+ * @param data 错误数据
+ */
+function levelOfError(data: ErrorData): LogLevel {
+  if (data.errorType === 'resource_error') {
+    return data.resourceType === 'script' ? 'error' : 'warning'
+  }
+  if (data.errorType === 'js_error' && CHUNK_LOAD_FAIL_RE.test(data.message)) {
+    return 'fatal'
+  }
+  return 'error'
+}
+
+/** 错误模块自描述：生命周期 + 管道过滤（ignoreErrors）+ 级别映射。 */
 export const errorModule = defineModule({
   type: 'error',
   create: createErrorMonitor,
-  filter: (data, config) => matchesIgnore(data.message, config.ignoreErrors)
+  filter: (data, config) => matchesIgnore(data.message, config.ignoreErrors),
+  levelOf: levelOfError
 })

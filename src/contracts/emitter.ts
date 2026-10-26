@@ -1,5 +1,5 @@
 // 契约层：模块与核心之间的接口（模块自描述 + 生命周期）。
-import type { LogDataOf, LogType } from './log'
+import type { LogDataOf, LogLevel, LogType } from './log'
 import type { ModuleType, ResolvedConfig } from './config'
 
 /** 上报出口：模块通过它把归一化后的数据交给核心管道。 */
@@ -35,6 +35,8 @@ export interface ModuleBehavior {
   filter?: (data: unknown, config: ResolvedConfig) => boolean
   /** timeOrigin 校正所用的 performance 事件起点（无则返回 0）。 */
   startTimeOf?: (data: unknown) => number
+  /** 该条数据对应的严重级别；未声明时由 DEFAULT_LEVEL_BY_TYPE 兜底。 */
+  levelOf?: (data: unknown) => LogLevel
 }
 
 /** 模块自描述清单：注册、装配、管道钩子的唯一入口。 */
@@ -49,6 +51,7 @@ export interface ModuleDeclaration<T extends ModuleType> {
   readonly create: ModuleFactory
   readonly filter?: (data: LogDataOf<T>, config: ResolvedConfig) => boolean
   readonly startTimeOf?: (data: LogDataOf<T>) => number
+  readonly levelOf?: (data: LogDataOf<T>) => LogLevel
 }
 
 /**
@@ -61,7 +64,8 @@ export function defineModule<T extends ModuleType>(decl: ModuleDeclaration<T>): 
     type: decl.type,
     create: decl.create,
     filter: decl.filter as ModuleBehavior['filter'],
-    startTimeOf: decl.startTimeOf as ModuleBehavior['startTimeOf']
+    startTimeOf: decl.startTimeOf as ModuleBehavior['startTimeOf'],
+    levelOf: decl.levelOf as ModuleBehavior['levelOf']
   }
 }
 
@@ -77,7 +81,11 @@ export function behaviorsOf(registry: ModuleRegistry): Partial<Record<LogType, M
   for (const type of Object.keys(registry) as ModuleType[]) {
     const desc = registry[type]
     if (!desc) continue
-    behaviors[type] = { filter: desc.filter, startTimeOf: desc.startTimeOf }
+    behaviors[type] = {
+      filter: desc.filter,
+      startTimeOf: desc.startTimeOf,
+      levelOf: desc.levelOf
+    }
   }
   return behaviors
 }

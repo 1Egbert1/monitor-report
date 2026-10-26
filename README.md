@@ -65,6 +65,41 @@ monitor.getStatus() // 自诊断：{ queued, dropped, failed, disabled }
 monitor.destroy() // 销毁（默认先 flush）
 ```
 
+## 日志级别
+
+每条日志带 `level`，取值对齐 Sentry 的 event level（去掉了 `log` 档）：
+
+```ts
+type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
+```
+
+级别由采集侧按确定性规则推导，**不需要逐条标注**；「某个故障多紧急」属于聚合后的优先级，由上报服务端计算（对齐 Sentry 的 issue priority High / Medium / Low），SDK 不做。
+
+| 来源 | level |
+| --- | --- |
+| chunk 加载失败引发的 JS 错误 | `fatal` |
+| 其他 JS 错误 / Promise 未处理 / Vue 组件错误 | `error` |
+| 资源错误（`<script>` 失败） | `error` |
+| 资源错误（图片 / 样式 / 媒体） | `warning` |
+| 接口 5xx / 超时 / 网络层失败 | `error` |
+| 接口 4xx / 重定向 | `warning` |
+| 接口 2xx / 请求被取消 | `info` |
+| 性能指标（评级 `poor` 时升 `warning`） | `info` |
+| 内存采样（高占用或疑似泄漏时升 `warning`） | `info` |
+| 自定义上报 | `info`（可由 `beforeSend` 覆写） |
+
+```ts
+createMonitor({
+  appId: 'demo',
+  reportUrl: '/api/upload',
+  // 业务最清楚某条日志意味着什么，可以在这里改写级别
+  beforeSend: (log) =>
+    log.level === 'warning' && log.pagePath.startsWith('/checkout')
+      ? { ...log, level: 'fatal' } // 结算链路上的 warning 按致命处理
+      : log
+})
+```
+
 ## 网络请求的状态码分类
 
 网络日志除了原始 `resStatus`，还带 `statusCategory` 与 `statusMessage` 两个字段，避免下游把一切失败统一渲染成「接口异常」：

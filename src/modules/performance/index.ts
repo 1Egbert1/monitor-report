@@ -250,9 +250,11 @@ export function createPerformanceMonitor(): MonitorModule {
   return new PerformanceMonitor()
 }
 
-/** 性能模块自描述：生命周期 + 以指标 startTime 作为事件起点。 */
+/** 性能模块自描述：生命周期 + 以指标 startTime 作为事件起点 + 评级映射级别。 */
 export const performanceModule = defineModule({
   type: 'performance',
   create: createPerformanceMonitor,
-  startTimeOf: (data) => data.startTime
+  startTimeOf: (data) => data.startTime,
+  // 指标本身是观测数据（info）；评级为 poor 说明该指标已影响体验，升为 warning
+  levelOf: (data) => (data.rating === 'poor' ? 'warning' : 'info')
 })

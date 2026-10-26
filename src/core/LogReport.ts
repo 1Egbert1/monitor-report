@@ -282,6 +282,8 @@ export class LogReport {
         0
       ),
       type: 'custom',
+      // 队列丢弃属需要关注的信号，固定 warning（不受 custom 默认 info 影响）
+      level: 'warning',
       data: { event: 'logs_dropped', count }
     }
   }

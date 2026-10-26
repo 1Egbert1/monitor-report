@@ -175,8 +175,19 @@ export function createMemoryMonitor(): MonitorModule {
   return new MemoryMonitor()
 }
 
-/** 内存模块自描述：生命周期（无过滤与事件起点）。 */
+/** 堆使用率超过该比例视为需要关注。 */
+const HIGH_USAGE_RATE = 0.8
+
+/** 每分钟增长超过 1MB 视为疑似泄漏。 */
+const LEAK_GROWTH_PER_MINUTE = 1024 * 1024
+
+/** 内存模块自描述：生命周期 + 级别映射（疑似泄漏或高占用才算 warning）。 */
 export const memoryModule = defineModule({
   type: 'memory',
-  create: createMemoryMonitor
+  create: createMemoryMonitor,
+  levelOf: (data) =>
+    data.usageRate >= HIGH_USAGE_RATE ||
+    (data.growthPerMinute !== null && data.growthPerMinute >= LEAK_GROWTH_PER_MINUTE)
+      ? 'warning'
+      : 'info'
 })

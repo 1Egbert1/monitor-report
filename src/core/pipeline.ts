@@ -1,12 +1,13 @@
 // 数据管道（规格书 6.3）：采样 → 类型开关 → 规则过滤 → 公共字段 → 脱敏 → beforeSend → 入队。
 // 处理顺序固定，不得调整。模块特化规则由注册表注入的 behaviors 提供，核心不出现具体模块名。
-import type { LogBase, LogDataOf, LogType, ReportLog } from '../contracts/log'
+import type { LogBase, LogDataOf, LogLevel, LogType, ReportLog } from '../contracts/log'
 import type { ModuleType, ResolvedConfig } from '../contracts/config'
 import type { ModuleBehavior } from '../contracts/emitter'
 import type { NavigationType } from '../utils/time'
 import { correctedNow } from '../utils/time'
 import { maskLog, containsPii } from '../utils/mask'
 import { schemaVersion, sdkVersion } from '../constants/version'
+import { DEFAULT_LEVEL_BY_TYPE } from '../constants/defaults'
 import type { ReportQueue } from './queue'
 
 /** 未脱敏的原始入队项（lazyReport 模式缓存用，startReport 时重走完整管道）。 */
@@ -133,8 +134,8 @@ export class Pipeline {
     const behavior = this.deps.behaviors[type]
     if (behavior?.filter?.(payload, config)) return
 
-    // 4 补全公共字段（pageUrl 在此刻快照）
-    const log = this.buildLog(type, payload)
+    // 4 补全公共字段（pageUrl 在此刻快照）+ 推导严重级别
+    const log = this.buildLog(type, payload, this.levelOf(type, payload))
 
     // 5 脱敏（不可跳过）
     const masked = maskLog(log, config.maskQueryKeys)
@@ -156,11 +157,12 @@ export class Pipeline {
   }
 
   /**
-   * 构造完整日志（公共字段 + data）。
+   * 构造完整日志（公共字段 + data + level）。
    * @param type 日志类型
    * @param data 数据类型化数据
+   * @param level 严重级别
    */
-  private buildLog<T extends LogType>(type: T, data: LogDataOf<T>): ReportLog {
+  private buildLog<T extends LogType>(type: T, data: LogDataOf<T>, level: LogLevel): ReportLog {
     const { config } = this.deps
     const common = this.deps.getCommon()
     // SPEC-GAP: 泛型 type 无法直接收窄为联合成员，构建后经 unknown 断言为 ReportLog。
@@ -180,8 +182,18 @@ export class Pipeline {
         this.entryStartOf(type, data)
       ),
       type,
-      data
+      data,
+      level
     } as unknown as ReportLog
+  }
+
+  /**
+   * 推导严重级别：模块声明优先，未声明时按类型兜底。
+   * @param type 日志类型
+   * @param data 数据类型化数据
+   */
+  private levelOf<T extends LogType>(type: T, data: LogDataOf<T>): LogLevel {
+    return this.deps.behaviors[type]?.levelOf?.(data) ?? DEFAULT_LEVEL_BY_TYPE[type]
   }
 
   /**

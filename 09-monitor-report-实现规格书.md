@@ -251,6 +251,7 @@ export interface LogBase {
   env: 'production' | 'development' | 'test'
   timestamp: number
   timeOriginCorrected: number
+  level?: LogLevel
   pageUrl: string
   pagePath: string
   navigationType: 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown'
@@ -497,10 +498,43 @@ flowchart LR
 1. **采样**：`Math.random() < sample[type]` 通过则继续；否则静默丢弃（计入 `sampledOut`，不单独上报）。
 2. **类型开关**：`type` 不在 `modules` 中 → 丢弃。
 3. **规则过滤**：`ignoreErrors` 命中 `data.message` → 丢弃；`urlBlacklist` 命中 `data.reqUrl` → 丢弃。
-4. **补全公共字段**：`appId / schemaVersion / sdkVersion / env / timestamp / pageUrl / pagePath / navigationType / ua / sessionId / userId / release / traceId / tags / extra`。`pageUrl` **在此刻快照**（此后不再读取 `location`）。
+4. **补全公共字段**：`appId / schemaVersion / sdkVersion / env / timestamp / pageUrl / pagePath / navigationType / ua / sessionId / userId / release / traceId / tags / extra`。`pageUrl` **在此刻快照**（此后不再读取 `location`）。同时写入 `level`（见 6.3.1）。
 5. **脱敏**：调用 `maskLog()`（见第 9 章），不可跳过。
-6. **`beforeSend`**：返回 `null` 则丢弃，否则使用返回值。
+6. **`beforeSend`**：返回 `null` 则丢弃，否则使用返回值（可覆写 `level`）。
 7. **入队**：写入 `queue`。
+
+#### 6.3.1 严重级别（`level`）
+
+对齐 Sentry 的 **event level** 口径，取 5 档（不含 Sentry 的 `log` 档，避免与 `info` 语义重叠）：
+
+```ts
+export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
+```
+
+**分工原则**：`level` 只表达「单条日志本身的严重度」，由采集侧按**确定性规则**推导，不需要业务方逐条标注；
+「一个故障该多紧急」属于聚合后的优先级（Sentry 的 issue priority：High / Medium / Low），**由上报服务端计算，SDK 不做**。
+
+推导入口是模块描述符的 `levelOf(data)`；未声明时按 `DEFAULT_LEVEL_BY_TYPE` 兜底（error→error，其余→info）。
+核心管道不出现任何具体模块名。
+
+| 来源 | 判定 | level |
+| --- | --- | --- |
+| `js_error` | 消息命中 chunk 加载失败（`Loading chunk * failed` / `ChunkLoadError` / `Importing a module script failed`） | `fatal` |
+| `js_error` | 其余未捕获异常 | `error` |
+| `promise_error` / `vue_error` | 未处理拒绝、组件内抛错 | `error` |
+| `resource_error` | `resourceType === 'script'` | `error` |
+| `resource_error` | 其他标签（img / link / media） | `warning` |
+| `network` | `statusCategory` ∈ server_error / timeout / network_error | `error` |
+| `network` | `statusCategory` ∈ bad_request / unauthorized / forbidden / not_found / client_error / redirect | `warning` |
+| `network` | 2xx、aborted | `info` |
+| `performance` | `rating === 'poor'` | `warning` |
+| `performance` | 其余 | `info` |
+| `memory` | `usageRate >= 0.8` 或 `growthPerMinute >= 1MB` | `warning` |
+| `memory` | 其余 | `info` |
+| `custom` | 未显式指定 | `info` |
+| 队列丢弃通知（`logs_dropped`） | 固定 | `warning` |
+
+`level` 为**可选字段**（协议向后兼容）：本 SDK 始终写入；仅旧版本 SDK 上报的历史数据缺失，消费端按 `'error'` 兜底。
 
 ### 6.4 队列与调度
 

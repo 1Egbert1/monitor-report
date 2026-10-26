@@ -2,7 +2,7 @@
 // 静态资源由错误监控 capture 通道负责，本模块不碰静态资源，禁止用 URL 前缀规则区分。
 import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
 import { defineModule } from '../../contracts/emitter'
-import type { LogType, NetworkData } from '../../contracts/log'
+import type { LogLevel, LogType, NetworkData } from '../../contracts/log'
 import { matchesBlacklist } from '../../utils/rules'
 import { wrapFetch } from './fetch'
 import { wrapXhr } from './xhr'
@@ -51,10 +51,36 @@ export function createNetworkMonitor(): MonitorModule {
   return new NetworkMonitor()
 }
 
-/** 网络模块自描述：生命周期 + 黑名单过滤 + reqStartTime 作为事件起点。 */
+/**
+ * 网络日志严重级别：按状态码语义分类映射，避免 401 与 500 同级。
+ * - 服务端故障 / 超时 / 网络层失败 → error
+ * - 4xx、重定向 → warning
+ * - 2xx 与主动取消 → info
+ * @param data 网络数据
+ */
+function levelOfNetwork(data: NetworkData): LogLevel {
+  switch (data.statusCategory) {
+    case 'server_error':
+    case 'timeout':
+    case 'network_error':
+      return 'error'
+    case 'bad_request':
+    case 'unauthorized':
+    case 'forbidden':
+    case 'not_found':
+    case 'client_error':
+    case 'redirect':
+      return 'warning'
+    default:
+      return 'info'
+  }
+}
+
+/** 网络模块自描述：生命周期 + 黑名单过滤 + 事件起点 + 级别映射。 */
 export const networkModule = defineModule({
   type: 'network',
   create: createNetworkMonitor,
   filter: (data, config) => matchesBlacklist(data.reqUrl, config.urlBlacklist),
-  startTimeOf: (data) => data.reqStartTime
+  startTimeOf: (data) => data.reqStartTime,
+  levelOf: levelOfNetwork
 })

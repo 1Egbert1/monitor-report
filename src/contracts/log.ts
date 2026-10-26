@@ -1,9 +1,17 @@
 // 契约层：ReportLog 联合类型与各维度 data 类型（纯类型，零逻辑）。
 
+/**
+ * 严重级别（对齐 Sentry 的 event level；不含 Sentry 的 log 档，避免与 info 语义重叠）。
+ * 仅表达「单条日志本身的严重度」，聚合后的优先级由上报服务端计算。
+ */
+export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
+
 /** 所有日志共有的基础字段。 */
 export interface LogBase {
   appId: string
   type: LogType
+  /** 严重级别：由采集侧按确定性规则推导（见各模块 levelOf），beforeSend 可覆写。 */
+  level?: LogLevel
   schemaVersion: number
   sdkVersion: string
   env: 'production' | 'development' | 'test'
