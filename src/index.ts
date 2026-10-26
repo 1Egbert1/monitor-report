@@ -13,6 +13,8 @@ export function createMonitor(config: UserConfig): LogReport {
 }
 
 export { LogReport }
+export { classifyNetworkOutcome } from './modules/network/status'
+export type { NetworkOutcome, NetworkOutcomeInput } from './modules/network/status'
 export * from './contracts/log'
 export * from './contracts/config'
 export * from './contracts/emitter'

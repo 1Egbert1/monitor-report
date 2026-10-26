@@ -1,6 +1,7 @@
 // XHR 包装（规格书 7.3）：WeakMap 元数据（禁止实例挂可枚举属性，禁止事项 7）；
 // 包装 open/send，监听 loadend/error/timeout/abort；包装幂等（__monitorWrapped）。
 import type { NetworkData } from '../../contracts/log'
+import { classifyNetworkOutcome } from './status'
 
 /** 单请求元数据。 */
 interface XhrMeta {
@@ -121,17 +122,24 @@ function attachListeners(
     if (opts.isBlacklisted(meta.url)) return
 
     const aborted = meta.aborted
-    const resOk = aborted ? true : !meta.errored && !meta.timedOut
+    // 4xx / 5xx 不会触发 error 事件（那是网络层失败专用），因此 resOk 必须按状态码判定，
+    // 不能简化为「没触发 error 就算成功」，否则 404 / 500 会被记成成功。
+    const outcome = classifyNetworkOutcome({
+      resStatus: xhr.status || undefined,
+      aborted,
+      errored: meta.errored,
+      timedOut: meta.timedOut
+    })
     opts.onDone({
       reqUrl: meta.url,
       reqMethod: meta.method,
       reqStartTime: meta.start,
       reqDuration: performanceTimelineNow() - meta.start,
-      resOk,
       resStatus: xhr.status || undefined,
       resStatusText: xhr.statusText || undefined,
       aborted,
-      errorMessage: meta.errored ? 'network error' : meta.timedOut ? 'timeout' : undefined
+      errorMessage: meta.errored ? 'network error' : meta.timedOut ? 'timeout' : undefined,
+      ...outcome
     })
   })
 }

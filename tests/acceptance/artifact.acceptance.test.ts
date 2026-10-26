@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createMonitor } from '../../src/index'
+import { ensureDist } from '../helpers/distBuild'
 import { MockPerformanceObserver } from '../setup'
 
 const root = process.cwd()
@@ -85,11 +86,10 @@ describe('AC-13 destroy() 无残留', () => {
 })
 
 describe('AC-08 / AC-10 子路径产物与 sourcemap', () => {
-  beforeAll(() => {
-    if (!existsSync(join(dist, 'error.js')) || !existsSync(join(dist, 'index.js.map'))) {
-      execSync('npx tsup', { cwd: root, stdio: 'ignore' })
-    }
-  }, 120000)
+  beforeAll(async () => {
+    // 与 entries.treeshake 等文件并行调用，靠文件锁串行化，避免并发 tsup 写坏 dist
+    await ensureDist()
+  }, 180000)
 
   it('AC-08 dist/error.js 不含其他模块符号', () => {
     const bundle = readBundle('error.js')

@@ -52,6 +52,20 @@ export interface PerformanceData {
   layoutShiftSources?: string[]
 }
 
+/** 网络请求结果的语义分类（避免下游把一切失败统一渲染成「接口异常」）。 */
+export type NetworkStatusCategory =
+  | 'success'
+  | 'redirect'
+  | 'bad_request'
+  | 'unauthorized'
+  | 'forbidden'
+  | 'not_found'
+  | 'client_error'
+  | 'server_error'
+  | 'timeout'
+  | 'aborted'
+  | 'network_error'
+
 /** 网络类日志承载数据。 */
 export interface NetworkData {
   reqUrl: string
@@ -63,6 +77,10 @@ export interface NetworkData {
   resStatusText?: string
   aborted: boolean
   errorMessage?: string
+  /** 结果语义分类：2xx / 400 / 401 / 403 / 404 / 其他 4xx / 5xx / 超时 / 取消 / 网络层失败。 */
+  statusCategory?: NetworkStatusCategory
+  /** 可直接展示的中文说明（含状态码与排查方向）。 */
+  statusMessage?: string
   reqBodySize?: number
   resBodySize?: number
 }

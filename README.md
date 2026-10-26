@@ -6,7 +6,7 @@
 
 - 错误监控：JS 错误 / 资源加载失败 / Promise 未处理拒绝三通道采集，归一化指纹 + 计数式去重
 - 性能监控：FCP / LCP / FID / INP / CLS，终态上报（Web Vitals 评级）
-- 网络监控：fetch / XMLHttpRequest 包装采集（可取消请求不误报）
+- 网络监控：fetch / XMLHttpRequest 包装采集（可取消请求不误报），按状态码输出语义分类，400 / 401 / 404 不再混成「接口异常」
 - 内存采样：JS 堆增长趋势（独立子路径，仅 Chromium）
 - 数据脱敏：URL query / CSS 选择器 / 文本 PII 兜底脱敏（管道内强制执行）
 - 体积敏感：按需引入子路径，core + error 约 5.7 kB（minified + brotli）
@@ -63,6 +63,33 @@ monitor.setExtra({ from: 'landing_page' }) // 合并附加数据
 monitor.flushReport() // 立即上报
 monitor.getStatus() // 自诊断：{ queued, dropped, failed, disabled }
 monitor.destroy() // 销毁（默认先 flush）
+```
+
+## 网络请求的状态码分类
+
+网络日志除了原始 `resStatus`，还带 `statusCategory` 与 `statusMessage` 两个字段，避免下游把一切失败统一渲染成「接口异常」：
+
+| 状态码 | `statusCategory` | 典型原因 |
+| --- | --- | --- |
+| 2xx | `success` | —— |
+| 3xx | `redirect` | 重定向未被跟随 / 接口地址被改写 |
+| 400 | `bad_request` | 前端传参字段或序列化错误 |
+| 401 | `unauthorized` | 未登录、token 过期或刷新逻辑失效（前端最高频事故） |
+| 403 | `forbidden` | 账号权限不足、白名单或风控拦截 |
+| 404 | `not_found` | URL 拼写错误、前后端接口版本不匹配 |
+| 405 / 409 / 413 / 422 / 429 | `client_error` | 方法用错 / 并发冲突 / 体积超限 / 校验失败 / 触发限流 |
+| 5xx | `server_error` | 后端故障（501 / 502 / 503 / 504 有独立文案） |
+| 无状态码且请求失败 | `network_error` | 断网、CORS 拦截、插件阻断 |
+| 超时 | `timeout` | 服务端未在约定时间内响应 |
+| 主动取消 | `aborted` | `AbortController` / `xhr.abort()`，**不计为失败** |
+
+`resOk` 的判定统一收在内部（2xx 为 `true`，其余为 `false`，取消为 `true`），fetch 与 XHR 两条通道语义一致。需要在自己的上报展示层复用同一套分类时，可以直接引用：
+
+```ts
+import { classifyNetworkOutcome } from '@yakult001/monitor-report' // 或 /network 子路径
+
+const out = classifyNetworkOutcome({ resStatus: 401, aborted: false })
+// { resOk: false, statusCategory: 'unauthorized', statusMessage: '未登录或凭证已失效（401）…' }
 ```
 
 ## 部署要求

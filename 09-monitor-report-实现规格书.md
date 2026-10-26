@@ -253,9 +253,16 @@ export interface NetworkData {
   resStatusText?: string
   aborted: boolean
   errorMessage?: string
+  statusCategory?: NetworkStatusCategory
+  statusMessage?: string
   reqBodySize?: number
   resBodySize?: number
 }
+
+export type NetworkStatusCategory =
+  | 'success' | 'redirect' | 'bad_request' | 'unauthorized' | 'forbidden'
+  | 'not_found' | 'client_error' | 'server_error'
+  | 'timeout' | 'aborted' | 'network_error'
 
 export interface MemoryData {
   usedJSHeapSize: number
@@ -652,6 +659,14 @@ window.fetch = function (input, init) { … }   // 必须保留 this 与全部�
 **公共规则**
 
 - 出口统一走 `urlBlacklist` 判定（含自动追加的 `reportUrl`）。
+- **结果判定必须收敛到 `modules/network/status.ts` 的 `classifyNetworkOutcome()`**，fetch 与 XHR 不得各自判定：
+  - 优先级：主动取消 > 超时 > 网络层错误 > HTTP 状态码。取消置顶的原因：取消时 `status` 常为 0，先判状态码会误记为失败。
+  - `resOk` 只在对齐后由该函数产出：2xx 为 true，其余（含 3xx/4xx/5xx）为 false，取消为 true。
+  - **禁止**用「未触发 `error` 事件即成功」判定 XHR —— 4xx/5xx 不触发 `error`，这是历史误判的根因。
+  - 输出 `statusCategory`（`success` / `redirect` / `bad_request` / `unauthorized` / `forbidden` / `not_found` / `client_error` / `server_error` / `timeout` / `aborted` / `network_error`）与 `statusMessage`（含状态码与排查方向的中文文案）。
+  - 400 / 401 / 403 / 404 / 405 / 408 / 409 / 413 / 422 / 429 / 500 / 502 / 503 / 504 有专用文案，其余按 2xx / 3xx / 4xx / 5xx 大类兜底。
+  - 该函数同时从 `monitor-report` 与 `monitor-report/network` 导出，供自建上报展示层复用同一套分类。
+- `resStatusText`：XHR 直接取 `xhr.statusText`；fetch 取 `res.statusText`，HTTP/2 下为空串时按状态码补标准短语（`OK` / `Not Found` 等）。
 - `collectResourceTiming` 默认 `false`：本期**不**从 `PerformanceObserver` 的 `resource` 条目补 DNS / connect / TTFB 字段。
   - 理由（写入注释）：`PerformanceResourceTiming` 条目与 XHR 实例之间没有关联 ID，同 URL 并发时 method / status 会与条目错配；且跨域资源缺 `Timing-Allow-Origin` 时相关字段恒为 0。若要启用，需实现「URL + startTime ±50ms 的 FIFO 匹配」，属 T-15 可选任务。
 

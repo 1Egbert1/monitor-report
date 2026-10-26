@@ -1,8 +1,8 @@
 // 树摇/子路径产物断言（规格书第 11 章 entries.treeshake.test.ts）：构建后字符串检索。
-import { execSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { ensureDist } from '../helpers/distBuild'
 
 const root = process.cwd()
 const dist = join(root, 'dist')
@@ -27,12 +27,10 @@ function readBundle(name: string): string {
 }
 
 describe('子路径构建产物（tree-shaking）', () => {
-  beforeAll(() => {
-    // 构建产物不存在（ci 中 test 先于 build 运行）时先构建一次
-    if (!existsSync(join(dist, 'error.js'))) {
-      execSync('npx tsup', { cwd: root, stdio: 'ignore' })
-    }
-  }, 120000)
+  beforeAll(async () => {
+    // 与 artifact.acceptance 等文件并行调用，靠文件锁串行化，避免并发 tsup 写坏 dist
+    await ensureDist()
+  }, 180000)
 
   it('dist/error.js 不含 MemoryMonitor / NetworkMonitor 相关符号', () => {
     const bundle = readBundle('error.js')
