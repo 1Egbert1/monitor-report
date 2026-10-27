@@ -639,14 +639,23 @@ export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 ```
 Breadcrumb {
   timestamp: number        // 毫秒时间戳（Sentry 用秒级浮点，本 SDK 统一毫秒）
-  category: string         // 'ui.click'（对齐 Sentry 命名）
+  category: string         // 'ui.click' | 'ui.input' | 'navigation'（对齐 Sentry 命名）
   level: LogLevel          // 'info'
   message: string          // 人类可读摘要，如 `click button#submit.primary`
-  data?: {                 // 结构化信息
-    selector, id?, class?, text?, attrs?, role?, href?, count?
+  data?: {                 // 结构化信息（按分类不同）
+    selector, id?, class?, text?, attrs?, role?, href?, type?, count?   // ui.click / ui.input
+    from, to, kind?                                                      // navigation
   }
 }
 ```
+
+三类来源：
+
+| 分类 | 触发 | 记录内容 |
+| --- | --- | --- |
+| `ui.click` | `document` 上的 `click`（capture） | 元素选择器、id/class、文本、`data-*`、role、href |
+| `ui.input` | `document` 上的 `focusin`（capture），**仅表单控件** | 同上，但**不含文本**，只带 `type` |
+| `navigation` | `pushState` / `replaceState` / `popstate` / `hashchange` | `from` / `to`（query 脱敏）、`kind`（触发方式） |
 
 判定与约束：
 
@@ -656,11 +665,25 @@ Breadcrumb {
    class 由构建生成（`css-1x2y3z`）时结构路径才是稳定依据。
 3. **隐私**：文本取 `textContent` 截断 30 字并过 `maskPiiText`；`href` 去掉 query；
    **不读取任何输入内容**（`input.value` 永不采集）；`data-*` 只取前 4 个、值截断 50 字。
-4. **合并**：同一元素 500ms 内的连续点击合并为一条，`data.count` 累加，`message` 末尾带 `×N`。
-5. **容量**：`maxBreadcrumbs`（默认 20）环形覆盖最早一条；设为 0 表示关闭。
+   **表单控件（`input` / `textarea` / `select`）一律不取 `textContent`** —— `<textarea>初始内容</textarea>`
+   的 textContent 就是内容本身，`<select>` 的是全部选项文案。
+4. **合并**：同一对象 500ms 内的连续同类行为只留一条（点击累加 `data.count` 并在 message 末尾带 `×N`；
+   导航与聚焦重复时直接跳过）。导航另有一条硬规则：`from === to` 时不记录。
+5. **容量**：`maxBreadcrumbs`（默认 20）环形覆盖最早一条；设为 `0` 时**连监听都不注册**。
 6. **快照时机**：在 `aggregate()`（错误首次出现）取，**不在 `emitEntry()` 取**——上报可能延迟到 `dedupWindow`
    之后，那时用户已经做了别的操作，快照会失真。
-7. **销毁**：`stop()` 时清空缓冲并解绑 `click` 监听（capture 阶段，挂 `document`）。
+7. **销毁**：`stop()` 时清空缓冲、解绑全部监听，并**把 `history.pushState` / `replaceState` 还原为原生实现**。
+
+**路由监听的三条硬约束**
+
+1. **不判断应用用的是 history 还是 hash 模式**。模式是路由库的概念，SDK 猜不准（history 模式也可能用 hash 做锚点，
+   hash 路由库内部也常用 `pushState`）。四个来源全接，把触发方式记进 `kind`，归类交给报表端。
+2. **能力检测**：`typeof history.pushState === 'function'` 才 wrap，否则跳过；`popstate` / `hashchange`
+   在个别环境不存在时同样跳过，不得抛错。
+3. **wrap 而非 replace**：保存原生引用，调用时保持 `this`，teardown 时还原。否则会与 React Router / Vue Router /
+   微前端框架（它们也可能 patch `history`）互相覆盖。已知副作用：`history.pushState.toString()` 会变成包装后的源码，
+   依赖该字符串做原生性判断的库可能受影响（Sentry 有同样问题）。
+
 
 **归一化与指纹（`normalize.ts`）**
 

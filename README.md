@@ -140,10 +140,20 @@ createMonitor({
 
 - **记的是被点击的元素**（`composedPath()[0]`，兼容 shadow DOM），不是当前聚焦元素
 - **同元素 500ms 内的连点合并为一条**，带 `count`，不刷屏
-- **隐私**：文本截断 30 字并脱敏邮箱/手机号/身份证，`href` 去掉 query，**永不读取输入内容**
+- **隐私**：文本截断 30 字并脱敏邮箱/手机号/身份证，`href` 去掉 query，**永不读取输入内容**；`input` / `textarea` / `select` 连 `textContent` 都不取
 - **快照在错误发生的那一刻取**，不是上报时取（上报可能延迟数秒）
 
-容量由 `maxBreadcrumbs` 控制（默认 20，设为 `0` 关闭）。默认值比 Sentry 的 100 小，是因为要照顾 `sendBeacon` / keepalive 的 60KB 上限。
+除了点击，还记录两类行为：
+
+| `category` | 触发 | 说明 |
+| --- | --- | --- |
+| `ui.click` | 任意点击 | 元素选择器 / id / class / 文本 / `data-*` |
+| `ui.input` | 表单控件聚焦 | 同上但**不含文本**，只带 `type`（`password` 之类） |
+| `navigation` | 路由变化 | `{ from, to, kind }`，`kind` 为 `pushState` / `replaceState` / `popstate` / `hashchange` |
+
+**路由不需要判断模式**：SDK 把四个来源全接上，把「这次跳转由谁触发」记进 `kind`，history 还是 hash 由报表端自己归类。`from === to` 不记录，query 里的值默认打码（`maskQueryKeys` 可放行指定键）。
+
+容量由 `maxBreadcrumbs` 控制（默认 20，设为 `0` 时连监听都不注册）。默认值比 Sentry 的 100 小，是因为要照顾 `sendBeacon` / keepalive 的 60KB 上限。
 
 ## 网络请求的状态码分类
 

@@ -6,7 +6,7 @@ import { DEDUP_MAP_MAX } from '../../constants/defaults'
 import { matchesIgnore } from '../../utils/rules'
 import { fingerprint, type RawErrorData } from './normalize'
 import { registerErrorChannels } from './channels'
-import { BreadcrumbStore } from './breadcrumb'
+import { BreadcrumbStore, FORM_TAGS, type NavigationKind } from './breadcrumb'
 
 /** 去重表条目。 */
 interface DedupEntry {
@@ -26,6 +26,7 @@ export class ErrorMonitor implements MonitorModule {
   private dedup = new Map<string, DedupEntry>()
   private cleanups: Array<() => void> = []
   private breadcrumbs: BreadcrumbStore | null = null
+  private lastHref = ''
   private started = false
 
   start(ctx: ModuleContext): void {
@@ -37,16 +38,13 @@ export class ErrorMonitor implements MonitorModule {
     this.cleanups.push(off)
 
     // 行为栈（对齐 Sentry breadcrumb）：只记录用户操作，不独立上报
-    this.breadcrumbs = new BreadcrumbStore(ctx.config.maxBreadcrumbs)
-    const onDocumentClick = (e: Event): void => {
-      const path = typeof e.composedPath === 'function' ? e.composedPath() : []
-      // shadow DOM 内部元素的点击会被 retarget 成 host，composedPath()[0] 才是真实目标
-      const target = (path[0] ?? e.target) as Node | null
-      if (!target || target.nodeType !== 1) return
-      this.breadcrumbs?.pushClick(target as Element)
+    // maxBreadcrumbs = 0 时彻底关闭，连监听都不注册（省开销）
+    if (ctx.config.maxBreadcrumbs > 0) {
+      this.breadcrumbs = new BreadcrumbStore(ctx.config.maxBreadcrumbs)
+      this.watchClicks()
+      this.watchInput()
+      this.watchNavigation()
     }
-    document.addEventListener('click', onDocumentClick, true)
-    this.cleanups.push(() => document.removeEventListener('click', onDocumentClick, true))
 
     // 单个定时器扫描全部指纹（禁止每条错误一个定时器）
     const timer = setInterval(() => {
@@ -62,6 +60,75 @@ export class ErrorMonitor implements MonitorModule {
    */
   onPageHidden(): void {
     this.flushAll()
+  }
+
+  /**
+   * 记录点击：capture 阶段挂在 document 上，取 composedPath()[0] 兼容 shadow DOM 的 retarget。
+   */
+  private watchClicks(): void {
+    const onClick = (e: Event): void => {
+      const el = firstElementOf(e)
+      if (el) this.breadcrumbs?.pushClick(el)
+    }
+    document.addEventListener('click', onClick, true)
+    this.cleanups.push(() => document.removeEventListener('click', onClick, true))
+  }
+
+  /**
+   * 记录输入聚焦：只认表单控件，且只记类型不记内容（见 describeElement）。
+   */
+  private watchInput(): void {
+    const onFocusIn = (e: Event): void => {
+      const el = firstElementOf(e)
+      if (!el) return
+      const tag = (el.localName || el.tagName || '').toLowerCase()
+      if (!FORM_TAGS.has(tag)) return
+      this.breadcrumbs?.pushFocus(el)
+    }
+    document.addEventListener('focusin', onFocusIn, true)
+    this.cleanups.push(() => document.removeEventListener('focusin', onFocusIn, true))
+  }
+
+  /**
+   * 记录路由变化。**不判断应用用的是 history 还是 hash 模式** —— 四个来源全接，
+   * 把触发方式记进 kind，归类交给报表端。
+   * pushState / replaceState 需要 wrap 原生实现，teardown 时必须还原，否则与路由库、
+   * 微前端框架互相打架。
+   */
+  private watchNavigation(): void {
+    const store = this.breadcrumbs
+    if (!store || typeof history === 'undefined') return
+    const keepQueryKeys = this.ctx?.config.maskQueryKeys ?? []
+    this.lastHref = readHref()
+
+    const record = (kind: NavigationKind): void => {
+      const next = readHref()
+      store.pushNavigation(this.lastHref, next, kind, keepQueryKeys)
+      // 无论是否记录都同步基准，避免下一次比对用到过期地址
+      this.lastHref = next
+    }
+
+    const patch = (name: 'pushState' | 'replaceState'): void => {
+      const original: History['pushState'] = history[name]
+      if (typeof original !== 'function') return
+      const wrapped = function (this: History, ...args: unknown[]): void {
+        original.apply(this, args as Parameters<History['pushState']>)
+        record(name)
+      }
+      history[name] = wrapped as History['pushState']
+      this.cleanups.push(() => {
+        history[name] = original
+      })
+    }
+    patch('pushState')
+    patch('replaceState')
+
+    const onPopState = (): void => record('popstate')
+    const onHashChange = (): void => record('hashchange')
+    window.addEventListener('popstate', onPopState)
+    window.addEventListener('hashchange', onHashChange)
+    this.cleanups.push(() => window.removeEventListener('popstate', onPopState))
+    this.cleanups.push(() => window.removeEventListener('hashchange', onHashChange))
   }
 
   /**
@@ -155,6 +222,7 @@ export class ErrorMonitor implements MonitorModule {
     this.cleanups = []
     this.breadcrumbs?.clear()
     this.breadcrumbs = null
+    this.lastHref = ''
     this.ctx = null
   }
 }
@@ -194,3 +262,25 @@ export const errorModule = defineModule({
   filter: (data, config) => matchesIgnore(data.message, config.ignoreErrors),
   levelOf: levelOfError
 })
+
+/**
+ * 取事件的首个元素目标：shadow DOM 内部元素会被 retarget 成 host，composedPath()[0] 才是真实目标。
+ * @param e 事件对象
+ */
+function firstElementOf(e: Event): Element | null {
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  const target = (path[0] ?? e.target) as Node | null
+  if (!target || target.nodeType !== 1) return null
+  return target as Element
+}
+
+/**
+ * 读取当前地址（访问 location 可能抛错，统一兜底为空串）。
+ */
+function readHref(): string {
+  try {
+    return typeof location !== 'undefined' ? location.href : ''
+  } catch {
+    return ''
+  }
+}
