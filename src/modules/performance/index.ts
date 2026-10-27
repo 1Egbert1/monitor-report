@@ -202,7 +202,8 @@ export class PerformanceMonitor implements MonitorModule {
       metricName: 'LCP',
       value,
       entryType: 'largest-contentful-paint',
-      startTime: value
+      startTime: value,
+      lcpElement: this.lcp.elementSelector
     })
   }
 
