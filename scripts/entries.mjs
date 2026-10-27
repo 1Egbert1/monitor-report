@@ -9,7 +9,8 @@ export const ENTRIES = {
   network: 'src/network.ts',
   memory: 'src/memory.ts',
   vue3: 'src/plugins/vue3.ts',
-  vue2: 'src/plugins/vue2.ts'
+  vue2: 'src/plugins/vue2.ts',
+  react: 'src/plugins/react.ts'
 }
 
 /**
