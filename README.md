@@ -5,7 +5,7 @@
 特性：
 
 - 错误监控：JS 错误 / 资源加载失败 / Promise 未处理拒绝三通道采集，归一化指纹 + 计数式去重
-- 性能监控：FCP / LCP / FID / INP / CLS，终态上报（Web Vitals 评级）
+- 性能监控：FCP / LCP / FID / INP / CLS 五项 Web Vitals + LT（长任务阻塞，诊断用），终态上报
 - 网络监控：fetch / XMLHttpRequest 包装采集（可取消请求不误报），按状态码输出语义分类，400 / 401 / 404 不再混成「接口异常」
 - 内存采样：JS 堆增长趋势（独立子路径，仅 Chromium）
 - 数据脱敏：URL query / CSS 选择器 / 文本 PII 兜底脱敏（管道内强制执行）
@@ -64,6 +64,83 @@ monitor.flushReport() // 立即上报
 monitor.getStatus() // 自诊断：{ queued, dropped, failed, disabled }
 monitor.destroy() // 销毁（默认先 flush）
 ```
+
+## 架构总览
+
+本项目有两张图，**回答两个不同的问题**——不是重复，是互补：
+
+| 图 | 回答什么 | 维度 |
+| --- | --- | --- |
+| **分层图** | 什么层干什么、边界在哪 | 代码组织（静态） |
+| **数据流图** | 数据怎么被采集、处理、上报 | 运行时时序（动态） |
+
+---
+
+### 一、分层架构：代码怎么组织
+
+![monitor-report 分层架构](assets/layering.svg)
+
+依赖方向**只朝下**，反向 import 会编译报错：
+
+| 层 | 目录 | 干什么 | **不干什么** | 依赖 |
+| --- | --- | --- | --- | --- |
+| 入口层 | `entries/` | 8 个子路径入口，组装模块集 | 不含业务逻辑 | modules |
+| 能力层 | `modules/` | error / network / performance / memory / vue2 / vue3 / react | 不直接发请求 | contracts（core 经 context 注入） |
+| 核心层 | `core/` | `LogReport`、pipeline、queue、transport、config | **不出现任何具体模块名** | 以上 |
+| 工具层 | `utils/` | 无状态纯函数（时间 / 脱敏 / 哈希 / 防抖） | 不持有状态 | contracts, constants |
+| 常量层 | `constants/` | 默认值、阈值表、入口清单 | 不含判断逻辑 | contracts |
+| 契约层 | `contracts/` | 类型、配置类型、`emitter` 接口 | **零运行时逻辑** | — |
+
+**边界怎么验证**：`contracts/` 不 import 任何层；`core/` 里搜不到 `if (type === 'network')` 这类判断（模块特化走 `behaviors[type]` 钩子）。加一个采集维度需要改 4 处声明（`LogDataMap`、`ModuleConfigMap`、`MODULE_DEFAULTS`、模块描述符 + `ALL_MODULES`），漏改会**编译报错**而不是静默失效。
+
+> 图中的红色虚线是 `behaviors[type]` 注入——这是唯一允许的「反向」依赖形式，通过注册表在运行时注入，不构成 import 环。
+
+---
+
+### 二、数据流：运行时数据怎么走
+
+![monitor-report 数据流架构](assets/architecture.svg)
+
+从采集到上报是一条**单向数据流**，`core/pipeline.ts` 是它的中枢：
+
+#### 三类采集入口
+
+| 入口 | 机制 | 负责 |
+| --- | --- | --- |
+| **error** | `onerror` / `unhandledrejection` / 资源错误 / React ErrorBoundary | 错误 |
+| **network** | `fetch` / `XMLHttpRequest` 替换 | 网络结果 |
+| **performance** | `PerformanceObserver`（6 个 entryType）+ `requestAnimationFrame` | 性能指标 |
+| **memory** | 定时器采样 | JS 堆用量 |
+
+每类入口各自做 `normalize`，产出统一的 `LogData`（含指纹 / 去重键），再 `emitter.emit(type, data)` 交给管道。
+
+#### 管道六步，顺序固定
+
+```
+① 校验  →  ② 采样  →  ③ 去重  →  ④ 脱敏  →  ⑤ 过滤  →  ⑥ 计算 level
+```
+
+顺序不可调换，理由在 `pipeline.ts` 顶部注释里写死：**采样必须在脱敏之前**（脱敏会改动内容、影响去重键），**脱敏必须在过滤之前**（`ignoreErrors` 的匹配要基于脱敏后的文本）。
+
+#### 模块钩子：核心不出现具体模块名
+
+管道只认 `LogType` 这个联合类型，模块特化全部由注册表注入：
+
+```ts
+behaviors[type] = {
+  filter?:    (data, config) => boolean   // 忽略规则
+  levelOf?:   (data) => LogLevel          // 级别映射
+  startTimeOf?: (data) => number          // 事件起点
+}
+```
+
+**好处是改动面可控**：新增采集维度时，只需改 4 处声明（`LogDataMap`、`ModuleConfigMap`、`MODULE_DEFAULTS`、模块描述符 + `ALL_MODULES`），漏改会**编译报错**而不是静默失效。
+
+#### 与常见实现的差异
+
+不少 SDK 把数据转换写成一个集中的 `transformData`（一个函数 `switch` 所有类型）。那样加类型就要改核心代码，且容易漏。本项目把这类逻辑**分散到各模块的 normalize 与 behaviors 钩子里**，核心只做通用的管道步骤。
+
+`breadcrumb` 是旁路而非主干——它只在 error 发生时被读取，挂在 `ErrorData.breadcrumbs` 上，不独立上报。
 
 ## 框架集成
 
@@ -137,7 +214,7 @@ createMonitor({
 
 ## 性能指标的上报时机
 
-五个指标里只有 FID 是「采集即上报」，其余默认都等到页面隐藏时结算——这是为了拿到 LCP / CLS / INP 的**终值**，中途值没有统计意义。
+七个指标里只有 FID 是「采集即上报」，其余默认都等到页面隐藏时结算——这是为了拿到 LCP / CLS / INP / LT 的**终值**，中途值没有统计意义。FPS 例外：它是采样型指标，采满 `fpsSampleDurationMs`（默认 10 秒）即结算上报，不等页面关闭。
 
 `reportPerformanceOnHiddenOnly: false` 会让「能提前确定的指标」立即上报：
 
@@ -146,7 +223,8 @@ createMonitor({
 | FCP | 隐藏 / 兜底时上报 | **采集即上报** |
 | LCP | 冻结时只记录，隐藏时上报 | **冻结即上报** |
 | FID | 采集即上报 | 采集即上报 |
-| CLS / INP | 隐藏 / 兜底时结算 | 隐藏 / 兜底时结算（累积型指标） |
+| CLS / INP / LT | 隐藏 / 兜底时结算 | 隐藏 / 兜底时结算（累积型指标） |
+| **FPS** | **采样满 10s 即结算**，页面隐藏时也结算 | 同左 |
 
 每个指标**只上报一次**，不会因为切换配置而重复。
 
@@ -158,7 +236,7 @@ createMonitor({
 
 ### 每个指标的"终值"定义不同
 
-五个指标不是同一类统计量，采集方式必须分别实现：
+七个指标不是同一类统计量，采集方式必须分别实现（前五个是 Core Web Vitals，`LT` 与 `FPS` 是诊断指标）：
 
 | 指标 | 终值怎么算 |
 | --- | --- |
@@ -167,10 +245,170 @@ createMonitor({
 | FID | 首次输入的 `processingStart - startTime` |
 | INP | 按 `interactionId` 聚合后取 **98 分位**（不取最大、不取平均） |
 | CLS | **会话窗口**（相邻间隔 >1s 或距窗口开始 >5s 切窗）内的累加值取最大 |
+| LT | 所有 `duration > 50ms` 任务的**总阻塞时长** `Σ max(0, duration - 50)`，附 `longTaskCount` / `maxLongTaskDuration` |
+| FPS | 按秒分桶统计帧数，报**平均 FPS** 与 `fpsDropRate`（超过 33ms 的帧占比） |
+
+`LT` 用来说明「卡顿有多少」，和 INP 互补：INP 只看**交互**相关的事件，LT 覆盖**包括非交互期间**的所有主线程长任务。它不计入 Core Web Vitals 达标率，阈值只是参考 Lighthouse 的 TBT 口径粗分档。
 
 阈值（`good` / `needs-improvement` / `poor`）取自 Web Vitals，**只用于生成 `rating`，绝不用来过滤数据**——「慢」本身就是数据，客户端丢掉就永远不知道有多少人卡在那种状态。
 
 LCP 上报时会带 `lcpElement`（最大内容元素的脱敏选择器），用于回答「是哪个元素慢」；浏览器未提供 `element`（如 bfcache 重放条目）时该字段缺省。
+
+## 页面加载时间轴与各阶段差值
+
+这是 HTML 规范 `PerformanceNavigationTiming` / `PerformanceResourceTiming` 的完整时间轴。**它决定了「页面慢」这个词能被拆成什么可归因的阶段**：
+
+![Navigation Timing 时间轴](assets/navigation-timing.png)
+
+图上每个箭头指向一个**时间戳**（相对 `timeOrigin` 的毫秒数），而**相邻两个时间戳做差，就得到一个阶段的耗时**。
+
+### 阶段划分
+
+彩色方块是阶段，方块之间的边界就是时间戳：
+
+| 阶段 | 起点 → 终点 | 说明 |
+| --- | --- | --- |
+| **Redirect** | `redirectStart` → `redirectEnd` | 301/302 跳转。带括号表示**可选**，没有重定向时为 `0` |
+| **Service Worker Init / Fetch** | `workerStart` → `fetchStart` | Service Worker 启动并拦截请求 |
+| **HTTP Cache** | `fetchStart` → `domainLookupStart` | 先查内存/磁盘缓存，命中就结束 |
+| **DNS** | `domainLookupStart` → `domainLookupEnd` | 域名解析成 IP |
+| **TCP / TLS / QUIC** | `connectStart` → `connectEnd` | 三次握手；HTTPS 还含 TLS 握手（`secureConnectionStart` 在中间） |
+| **Request** | `requestStart` → `responseStart` | 请求发出 → 收到第一个字节（这段时间服务器在处理） |
+| **Early Hints (103)** | `firstInterimResponseStart` | 服务器先发 `103` 提示预加载，再发正式响应（较新的特性） |
+| **Response** | `responseStart` → `responseEnd` | 响应体传输 |
+| **Process Unload** | `unloadEventStart` → `unloadEventEnd` | 卸载上一个页面 |
+| **Processing** | `responseEnd` → `domInteractive` | HTML 解析、执行同步脚本 |
+| **Load** | `domInteractive` → `loadEventEnd` | 图片、样式等资源加载完成 |
+
+### 时间戳清单
+
+| 时间戳 | 含义 | 备注 |
+| --- | --- | --- |
+| `startTime` | 导航开始（通常为 `0`） | 一切的原点 |
+| `redirectStart` / `redirectEnd` | 重定向期间 | 没发生重定向时都是 `0` |
+| `workerStart` | Service Worker 启动 | 无 SW 时为 `0` |
+| `fetchStart` | 开始查找资源 | 缓存命中时，后面的时间戳可能都是 `0` |
+| `domainLookupStart` / `domainLookupEnd` | DNS 解析 | 连接复用时为 `0` |
+| `connectStart` / `connectEnd` | 连接建立 | 同上 |
+| `secureConnectionStart` | TLS 握手开始 | 仅 HTTPS；纯 HTTP 为 `0` |
+| `requestStart` | 发送 HTTP 请求 | **可能早于 `connectEnd`**（TCP Fast Open） |
+| `firstInterimResponseStart` | 收到 `103 Early Hints` | 无 Early Hints 时为 `0` |
+| `responseStart` | 收到第一个字节 | **见下方注解** |
+| `responseEnd` | 收到最后一个字节 | |
+| `unloadEventStart` / `unloadEventEnd` | 前一个页面的 `unload` | 没有前页面时为 `0` |
+| `domInteractive` | DOM 解析完成（`readyState = interactive`） | 此时可执行 DCL 逻辑 |
+| `domContentLoadedEventStart` / `End` | `DOMContentLoaded` 事件 | |
+| `domComplete` | `readyState = complete` | |
+| `loadEventStart` / `loadEventEnd` | `load` 事件 | **事件未触发前都是 `0`** |
+
+### 做差的意义：把「页面慢」拆开归因
+
+单看 `loadEventEnd = 3200ms` 没有任何信息量。**做差之后才知道该优化哪里**：
+
+| 指标 | 公式 | 归因到什么 | 典型优化方向 |
+| --- | --- | --- | --- |
+| **TTFB** | `responseStart - startTime` | **服务器响应速度** | CDN、接口合并、服务端耗时 |
+| DNS 解析 | `domainLookupEnd - domainLookupStart` | 域名解析 | DNS 预解析、减少域名数 |
+| TCP 建连 | `connectEnd - connectStart` | 连接建立 | 长连接、HTTP/2/3 |
+| TLS 握手 | `connectEnd - secureConnectionStart` | HTTPS 握手 | TLS 1.3、会话恢复 |
+| **服务器处理** | `responseStart - requestStart` | 服务器侧（不含传输） | 服务端性能 |
+| **内容下载** | `responseEnd - responseStart` | 响应体传输 | 压缩、HTTP/2 多路复用、减体积 |
+| **DOM 解析** | `domInteractive - responseEnd` | HTML 解析 + 同步脚本 | 减少同步 JS、减小 HTML |
+| **DCL 总耗时** | `domContentLoadedEventEnd - startTime` | DOM 可交互时刻 | 阻塞脚本、内联 CSS |
+| **资源加载** | `loadEventStart - domContentLoadedEventEnd` | 等图片/字体/样式 | 图片懒加载、预加载 |
+| **页面总耗时** | `loadEventEnd - startTime` | 全程 | 以上各项之和 |
+
+> **`TTFB` 是这些差值里最被重视的一项**，Google 的 CrUX 也直接收录它作为参考指标。当线上有人反馈「页面白屏」时，第一件该看的就是 TTFB——它把问题分成「服务器慢」还是「前端慢」。
+
+### 三个容易踩的坑
+
+**① `responseStart` 的定义被 `103 Early Hints` 改过**
+
+图下角注释的含义是：如果服务器先发了 `103 Early Hints`，`responseStart` **等于 `firstInterimResponseStart`**；否则等于 `finalResponseHeadersStart`。也就是 `responseStart` 不再严格等于“第一个正式字节”，而可能是“第一个先遣响应”。
+
+**② `requestStart` 可能早于 `connectEnd`**
+
+TCP Fast Open 下，客户端可以在连接建立完成前就发数据。所以上面的“服务器处理”公式有可能是负数——这是正常的，不要当异常处理。
+
+**③ `0` 不等于「没耗时」，而是「这个阶段没发生或还没到」**
+
+- `loadEventStart` 在 `load` 事件没触发前读，永远是 `0`
+- `redirectEnd` 在无跳转时是 `0`，而不是“跳转用了 0ms”
+- 直接拿 `0` 做差会得到负值，**必须先判 `0`**
+
+### 与我们采集指标的关系
+
+这张图上**我们只采集其中一小部分**：
+
+| 时间轴上的点 | 我们采吗 | 说明 |
+| --- | --- | --- |
+| TTFB | ❌ **没采** | 它是服务端指标，且要和服务端监控对齐才有意义 |
+| DNS / TCP / TLS | ❌ | 网络层细节，与用户体验相关性弱 |
+| `domInteractive` / DCL | ❌ | 已被 FCP / LCP 更好地覆盖 |
+| **FCP** | ✅ | 第一次渲染，约在 `domInteractive` 附近 |
+| **LCP** | ✅ | 可能**晚于 `load`**（懒加载大图） |
+| **FID** | ✅ | 首次输入的响应延迟，与这张图无关 |
+| **CLS / INP / LT** | ✅ | **与这张图无关**，是 `load` 之后持续产生的 |
+
+**关键区别**：这张时间轴描述的是**加载期**（loading），而我们的指标覆盖的是**整个生命周期**（含 load 之后的交互期）。两者是互补关系，不能互相替代——`loadEventEnd` 早不代表体验好，因为卡顿发生在 load 之后的交互里。
+
+## FPS：帧率统计
+
+`LT` 测「主线程被占多久」，`FPS` 测「画面是否流畅」。两者互补：**5 个 40ms 任务全都在 Long Task 阈值以下（LT 不记录），但可能连掉 12 帧**——这种情况只有 FPS 能看见。
+
+### 采集方式
+
+`requestAnimationFrame` 打点 + **按秒分桶**：
+
+```ts
+每帧回调 → delta = now - lastFrameTime
+每 1 秒 → 把这一秒的帧数记为一个 FPS 样本
+结算时 → 各秒样本的平均值
+```
+
+用 `performance.now()`（单调递增），**不是** `Date.now()`——后者受系统时钟调整影响（NTP 校准、用户改时间），会让 `delta` 变成负数。
+
+### 上报三个字段
+
+| 字段 | 含义 |
+| --- | --- |
+| `value` | 平均 FPS（各秒样本的平均） |
+| **`fpsDropRate`** | **掉帧率 0-1**：超过 33ms 的帧占比 |
+| `maxFrameDuration` | 最长单帧间隔 ms（定位最卡的时刻） |
+
+**为什么不能只报平均 FPS**：帧率在 60 和 30 之间反复跳，平均是 45、看着还行，但体验已经崩了。`fpsDropRate` 直接反映这种长尾。
+
+### 三个必须处理的坑
+
+**① 页面隐藏时 rAF 会停止，但时钟继续走**
+
+切后台 30 秒后回来，首帧 `delta = 30000ms`，会算出 `FPS ≈ 0.03` 的假值。**必须在 `visibilitychange` 时 `pause()` / `resume()`**，跳过不可见期间的空档。
+
+**② `resume()` 要清空当前桶的计数**
+
+否则 `pause` 前残留的帧数会被算进 `resume` 后的第一个样本，导致 FPS 偏高。
+
+**③ 采样期间不要在回调里做任何分配**
+
+rAF 每 16.7ms 调用一次，回调里只做一次减法与两次比较；不做 DOM、不拼字符串、不建对象。观测者本身不能造成卡顿。
+
+### 默认关闭
+
+`performance.fpsEnabled: true` 开启。默认关的原因：**rAF 持续运行会阻止浏览器进入低功耗模式**，移动端有电量影响；且不是所有场景都需要测帧率。
+
+```ts
+createMonitor({
+  appId: 'your-app-id',
+  reportUrl: 'https://your-domain/collect',
+  performance: { fpsEnabled: true, fpsSampleDurationMs: 15000 }
+})
+```
+
+### 阈值与判定
+
+`rating` 阈值（`good ≥ 50` / `needs-improvement ≥ 30`）**参考游戏与视频行业的经验值，不是 W3C 标准**。掉帧判定用 **33ms**（60Hz 下连续掉 2 帧）。
+
+> FPS 是唯一「**越高越好**」的指标，`getRating` 对它做了方向反转；其余指标都是「越低越好」。
 
 ## 错误上下文：行为栈
 
@@ -285,6 +523,16 @@ export default defineNuxtPlugin(() => {
 ### 自定义传输（request）
 
 配置 `request: (logs) => ...` 会**完全替换**内置传输逻辑（不再走队列重试）。此模式下失去内置卸载兜底，请同时提供 `unloadRequest`，否则卸载时的批次会被跳过并计入 dropped 计数。
+
+## 关于 sourcemap
+
+**npm 包里不含 `.map` 文件**，这是有意为之：
+
+- 接入方定位自己代码的报错**不需要**本包的 map —— sourcemap 反解逐帧独立，业务帧由业务自己的 map 还原，本包缺 map 不会让业务帧退化
+- 去掉 map 后 tarball 从 524 KB 降到约 90 KB
+- 构建产物 `dist/` 里仍完整保留 map，作为 GitHub Release 附件发布
+
+如果确实需要连 SDK 内部帧一起还原（例如排查 SDK 自身的报错），从对应版本的 Release 下载 map，按上报平台的 sourcemap 上传流程使用。注意 `dist` 里的 js 已在发布前移除 `//# sourceMappingURL` 注释，所以浏览器 devtools **不会**自动加载 map。
 
 ## 接入方责任
 

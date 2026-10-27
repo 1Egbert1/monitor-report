@@ -39,7 +39,7 @@
 | D-01 | 核心层 `LogReport` | 配置合并、数据管道、上报调度、生命周期 |
 | D-02 | 契约层 | 类型、接口、常量（无逻辑） |
 | D-03 | 错误监控模块 | 三通道采集 + 归一化 + 计数式去重 |
-| D-04 | 性能监控模块 | FCP / LCP / FID / INP / CLS，终态上报 |
+| D-04 | 性能监控模块 | FCP / LCP / FID / INP / CLS 五项 Web Vitals + LT（长任务）+ FPS（帧率），诊断指标终态上报 |
 | D-05 | 网络监控模块 | fetch / XHR 包装采集，可取消分类 |
 | D-06 | 内存采样模块 | JS 堆采样 + 增长趋势（独立子路径，不进默认入口） |
 | D-07 | Vue 2 / Vue 3 适配插件 | 挂载 `errorHandler` 且**保留并调用**原有 handler |
@@ -763,8 +763,57 @@ fingerprint(error):
 | FID | `first-input` | `{ type:'first-input', buffered:true }`，取 `processingStart - startTime` | 采集到即可 |
 | INP | `event` | `{ type:'event', buffered:true, durationThreshold:40 }` | 页面隐藏时结算 |
 | CLS | `layout-shift` | `{ type:'layout-shift', buffered:true }` | 页面隐藏时结算 |
+| **LT** | `longtask` | `{ type:'longtask', buffered:true }` | 页面隐藏时结算 |
+| **FPS** | （不走 observer） | `requestAnimationFrame` 打点，按秒分桶 | 采样满 `fpsSampleDurationMs`（默认 10s）或页面隐藏时 |
 
 **所有 Observer 必须带 `buffered: true`**——否则 SDK 晚加载时指标永久丢失。
+
+**关于 LT（Long Task）——诊断指标，不是 Core Web Vital**
+
+| 项 | 定义 |
+| --- | --- |
+| 判定 | 主线程任务 `duration > 50ms`（RAIL 模型） |
+| `value` | **总阻塞时长** = `Σ max(0, duration - 50)`，单位 ms |
+| `longTaskCount` | 长任务个数 |
+| `maxLongTaskDuration` | 最长单个任务时长 ms |
+| 结算 | 与 CLS / INP 同为累积型，只在页面隐藏 / 兜底定时器结算一次 |
+| 无数据 | `count === 0` 时**不上报**（返回 null），禁止报 0 稀释统计 |
+| 阈值 | 200 / 600，**参考** Lighthouse 的 TBT 口径 |
+
+三条约束：
+
+1. **不叫 TBT**。TBT 的严格定义是「FCP → TTI 窗口内的阻塞时间」，而 TTI 已废弃、RUM 里拿不到。
+   本 SDK 统计整个页面生命周期，口径不同，叫 TBT 会误导下游。
+2. **不逐条上报**。一个页面可能几十上百个长任务，客户端聚合后只报一条，
+   payload 从 N 条降到 1 条；需要定位具体时刻时用 `maxLongTaskDuration`。
+3. **不参与 CWV 评分**。`rating` 只是粗分档，报表端不得把 LT 混进 Core Web Vitals 的达标率。
+
+**FPS（`fps.ts`）——采样型指标，不走 PerformanceObserver**
+
+| 项 | 定义 |
+| --- | --- |
+| 采集 | `requestAnimationFrame` 打点，**按秒分桶**（每秒一个样本） |
+| 时间基准 | **必须 `performance.now()`**（单调递增）。`Date.now()` 会被时钟调整影响，delta 变负 |
+| `value` | 平均 FPS = 各秒样本的平均 |
+| `fpsDropRate` | 掉帧率 = 超过 **33ms**（60Hz × 2）的帧占比 |
+| `maxFrameDuration` | 最长单帧间隔 ms |
+| 无样本 | 返回 null，不上报 |
+| 默认 | **关闭**（`performance.fpsEnabled: true` 开启） |
+| 阈值 | good ≥ 50 / needs-improvement ≥ 30，**经验值，非 W3C 标准** |
+
+三个必须处理的坑：
+
+1. **页面隐藏时 rAF 停止但时钟继续走** —— 切后台 30 秒回来首帧 `delta = 30000`，会算出 `FPS ≈ 0.03`
+   的假值。必须 `visibilitychange` 时 `pause()` / `resume()`。
+2. **`resume()` 必须清空当前桶的 `framesInBucket`** —— 否则 pause 前残留的帧会混进 resume 后的首个样本。
+3. **回调内不做分配** —— rAF 每 16.7ms 一次，只做一次减法与两次比较；观测者本身不能造成卡顿。
+
+与 LT 的分工：**LT 测「主线程被占多久」，FPS 测「画面是否流畅」**。5 个 40ms 任务都低于 Long Task
+阈值（LT 不记录），但可能连掉 12 帧——只有 FPS 能看见。
+
+注意 `FPS` 不在 `PERFORMANCE_OBSERVER_CONFIGS` 中（不走 observer），
+类型上用 `ObservedMetricName = Exclude<MetricName, 'FPS'>` 表达这个区分，
+让 `handleEntry` 的 switch 只覆盖真实可达的分支。
 
 **LCP 状态机（`lcp.ts`）——最容易写错的点**
 
@@ -1057,6 +1106,28 @@ export default defineConfig({
   define: { __SDK_VERSION__: JSON.stringify(pkg.version) }
 })
 ```
+
+**sourcemap 的产出与分发（2026-10-27 定，两者必须分开看）**
+
+`sourcemap: true` 是**产出**要求，不是**分发**要求：
+
+| 环节 | 要求 |
+| --- | --- |
+| 构建 | `dist/` 必须含 `.map`（AC-10 断言），供排查 SDK 自身报障 |
+| npm 包 | **不含 `.map`**：`files` 白名单只列 `dist/*.js` / `dist/*.cjs` / `dist/*.d.ts` / `dist/*.d.cts` |
+| 注释 | `prepublishOnly` 执行 `scripts/strip-sourcemap-comments.mjs`，剥离 `//# sourceMappingURL=` |
+| 分发 | `.map` 作为 GitHub Release 附件；需要最全堆栈的团队自行下载 |
+
+依据（均已实测）：
+
+1. **接入方定位自己的 bug 不依赖 SDK 的 map。** sourcemap 反解是逐帧独立的，业务帧由业务自己的 map 还原。
+   实测「业务 + SDK 混合堆栈」：SDK 帧在有无 map 时不同（`status.ts:55` vs `chunk-XXX.js:1`），
+   而**业务帧还原结果完全一致**（`biz.ts:12`）。故缺 SDK map 不影响接入方修复自己的代码。
+2. npm 包 tarball **524 KB → 89.5 KB**（map 占原解包体积 78.5%）。
+3. **只删 map 不删注释会让浏览器请求不存在的文件（404），比不提供 sourcemap 更糟** —— 注释必须同步剥离。
+
+`verify:dist` 的 sourcemap 断言是**单向**的（有引用就必须有文件），因此 strip 后仍能通过；
+一旦出现「有注释无 map」，CI 直接失败。
 
 ### 10.3 `.size-limit.json`
 

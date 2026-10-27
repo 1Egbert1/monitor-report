@@ -7,3 +7,7 @@ coverage/
 .DS_Store
 demo/received.jsonl
 demo/vendor/
+
+# 工作文档不进仓库（面试叙事 / 项目复盘等个人材料）
+# README 用的图片在 assets/，独立于此
+docs/
