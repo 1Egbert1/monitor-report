@@ -6,6 +6,7 @@ import { DEDUP_MAP_MAX } from '../../constants/defaults'
 import { matchesIgnore } from '../../utils/rules'
 import { fingerprint, type RawErrorData } from './normalize'
 import { registerErrorChannels } from './channels'
+import { BreadcrumbStore } from './breadcrumb'
 
 /** 去重表条目。 */
 interface DedupEntry {
@@ -24,6 +25,7 @@ export class ErrorMonitor implements MonitorModule {
   private ctx: ModuleContext | null = null
   private dedup = new Map<string, DedupEntry>()
   private cleanups: Array<() => void> = []
+  private breadcrumbs: BreadcrumbStore | null = null
   private started = false
 
   start(ctx: ModuleContext): void {
@@ -33,6 +35,18 @@ export class ErrorMonitor implements MonitorModule {
 
     const off = registerErrorChannels({ onError: (raw) => this.aggregate(raw) })
     this.cleanups.push(off)
+
+    // 行为栈（对齐 Sentry breadcrumb）：只记录用户操作，不独立上报
+    this.breadcrumbs = new BreadcrumbStore(ctx.config.maxBreadcrumbs)
+    const onDocumentClick = (e: Event): void => {
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+      // shadow DOM 内部元素的点击会被 retarget 成 host，composedPath()[0] 才是真实目标
+      const target = (path[0] ?? e.target) as Node | null
+      if (!target || target.nodeType !== 1) return
+      this.breadcrumbs?.pushClick(target as Element)
+    }
+    document.addEventListener('click', onDocumentClick, true)
+    this.cleanups.push(() => document.removeEventListener('click', onDocumentClick, true))
 
     // 单个定时器扫描全部指纹（禁止每条错误一个定时器）
     const timer = setInterval(() => {
@@ -77,7 +91,15 @@ export class ErrorMonitor implements MonitorModule {
         this.dedup.delete(oldest)
       }
     }
-    this.dedup.set(fp, { count: 1, firstSeen: now, lastSeen: now, raw })
+    // 快照在错误首次出现时取，而不是在上报时取 —— 上报可能延迟数秒，
+    // 那时用户已经做了别的操作，快照会失真
+    const snapshot = this.breadcrumbs?.snapshot() ?? []
+    this.dedup.set(fp, {
+      count: 1,
+      firstSeen: now,
+      lastSeen: now,
+      raw: snapshot.length > 0 ? { ...raw, breadcrumbs: snapshot } : raw
+    })
   }
 
   /**
@@ -131,6 +153,8 @@ export class ErrorMonitor implements MonitorModule {
       fn()
     }
     this.cleanups = []
+    this.breadcrumbs?.clear()
+    this.breadcrumbs = null
     this.ctx = null
   }
 }

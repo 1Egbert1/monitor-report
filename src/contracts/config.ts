@@ -37,6 +37,8 @@ export type UserConfig = UserModuleConfig & {
   dedupWindow?: number
   maskQueryKeys?: string[]
   reportPerformanceOnHiddenOnly?: boolean
+  /** 行为栈容量上限（对齐 Sentry 的 maxBreadcrumbs，默认 20）。 */
+  maxBreadcrumbs?: number
   extra?: Record<string, unknown>
   tags?: Record<string, string>
   beforeSend?: (log: ReportLog) => ReportLog | null
@@ -62,6 +64,7 @@ export type ResolvedConfig = Readonly<ResolvedModuleConfig> & {
   readonly dedupWindow: number
   readonly maskQueryKeys: readonly string[]
   readonly reportPerformanceOnHiddenOnly: boolean
+  readonly maxBreadcrumbs: number
   readonly extra: Record<string, unknown>
   readonly tags: Record<string, string>
   readonly beforeSend?: (log: ReportLog) => ReportLog | null

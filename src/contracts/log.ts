@@ -30,6 +30,24 @@ export interface LogBase {
 }
 
 /** 错误类日志承载数据。 */
+/**
+ * 行为栈条目（对齐 Sentry breadcrumb 的字段语义）。
+ * 不独立上报，只在错误上报时作为上下文快照附带。
+ */
+export interface Breadcrumb {
+  /** 发生时刻（毫秒时间戳，与本 SDK 其他时间字段一致；Sentry 用秒级浮点） */
+  timestamp: number
+  /** 分类，对齐 Sentry 的命名：ui.click / ui.input / navigation / http / console */
+  category: string
+  /** 级别，与日志 level 同一套取值 */
+  level: LogLevel
+  /** 人类可读摘要，如 `click button#submit` */
+  message: string
+  /** 结构化附加信息（元素选择器、文本、data-* 埋点属性等） */
+  data?: Record<string, unknown>
+}
+
+/** 错误数据结构。 */
 export interface ErrorData {
   errorType: 'js_error' | 'promise_error' | 'resource_error' | 'vue_error'
   message: string
@@ -41,6 +59,8 @@ export interface ErrorData {
   resourceType?: string
   selector?: string
   crossOrigin?: boolean
+  /** 错误发生时刻的行为栈快照（最多 maxBreadcrumbs 条，按时间正序） */
+  breadcrumbs?: Breadcrumb[]
   count: number
   firstSeen: number
   lastSeen: number

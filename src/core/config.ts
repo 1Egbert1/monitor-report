@@ -66,6 +66,7 @@ export function resolveConfig(user: UserConfig): ResolvedConfig {
     maskQueryKeys: [...(user.maskQueryKeys ?? [])],
     reportPerformanceOnHiddenOnly:
       user.reportPerformanceOnHiddenOnly ?? DEFAULTS.reportPerformanceOnHiddenOnly,
+    maxBreadcrumbs: user.maxBreadcrumbs ?? DEFAULTS.maxBreadcrumbs,
     extra: { ...(user.extra ?? {}) },
     tags: { ...(user.tags ?? {}) },
     beforeSend: user.beforeSend,

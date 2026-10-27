@@ -631,6 +631,37 @@ export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 3. **标签名归一化**：`(el.localName || el.tagName).toLowerCase()`。`localName` 去命名空间前缀（`svg:image` → `image`），`toLowerCase` 兼容 XML 文档（其中 `localName` 不保证小写）。
 4. `resourceUrl` 取 `currentSrc || src || href`（媒体元素优先 `currentSrc`）。
 
+**行为栈（`breadcrumb.ts`）——错误上下文，不独立上报**
+
+对齐 Sentry 的 breadcrumb 机制：环形缓冲记录用户操作，**只在错误聚合时取快照附带**。
+绝不把点击当独立日志上报——那只会变成噪声。
+
+```
+Breadcrumb {
+  timestamp: number        // 毫秒时间戳（Sentry 用秒级浮点，本 SDK 统一毫秒）
+  category: string         // 'ui.click'（对齐 Sentry 命名）
+  level: LogLevel          // 'info'
+  message: string          // 人类可读摘要，如 `click button#submit.primary`
+  data?: {                 // 结构化信息
+    selector, id?, class?, text?, attrs?, role?, href?, count?
+  }
+}
+```
+
+判定与约束：
+
+1. **目标元素**：`composedPath()[0]`，回退 `event.target`。shadow DOM 内部元素的点击会被 retarget 成 host，
+   直接用 `event.target` 会记错元素。**禁止用 `document.activeElement`**——那是当前聚焦元素，点不可聚焦元素时通常是 `body`。
+2. **选择器**：复用 `nodeSelector(el)`（结构路径，限深 4 层）；`id` / `class`（最多 3 个）作为可读补充。
+   class 由构建生成（`css-1x2y3z`）时结构路径才是稳定依据。
+3. **隐私**：文本取 `textContent` 截断 30 字并过 `maskPiiText`；`href` 去掉 query；
+   **不读取任何输入内容**（`input.value` 永不采集）；`data-*` 只取前 4 个、值截断 50 字。
+4. **合并**：同一元素 500ms 内的连续点击合并为一条，`data.count` 累加，`message` 末尾带 `×N`。
+5. **容量**：`maxBreadcrumbs`（默认 20）环形覆盖最早一条；设为 0 表示关闭。
+6. **快照时机**：在 `aggregate()`（错误首次出现）取，**不在 `emitEntry()` 取**——上报可能延迟到 `dedupWindow`
+   之后，那时用户已经做了别的操作，快照会失真。
+7. **销毁**：`stop()` 时清空缓冲并解绑 `click` 监听（capture 阶段，挂 `document`）。
+
 **归一化与指纹（`normalize.ts`）**
 
 ```

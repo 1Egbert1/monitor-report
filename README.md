@@ -121,6 +121,30 @@ createMonitor({
 
 冻结只影响 LCP，CLS / INP 的观测继续运行。
 
+## 错误上下文：行为栈
+
+错误上报时会附带一段**行为栈**（breadcrumb），用于还原「用户做了什么才触发这个错误」。它不独立上报，只在错误日志里出现：
+
+```json
+{
+  "errorType": "js_error",
+  "message": "Cannot read properties of undefined (reading 'id')",
+  "breadcrumbs": [
+    { "timestamp": 1793073476217, "category": "ui.click", "level": "info",
+      "message": "click button#submit.primary", "data": { "selector": "button:nth-child(2)", "id": "submit", "class": "primary", "text": "提交订单", "attrs": { "data-track": "pay" } } }
+  ]
+}
+```
+
+几个刻意的取舍：
+
+- **记的是被点击的元素**（`composedPath()[0]`，兼容 shadow DOM），不是当前聚焦元素
+- **同元素 500ms 内的连点合并为一条**，带 `count`，不刷屏
+- **隐私**：文本截断 30 字并脱敏邮箱/手机号/身份证，`href` 去掉 query，**永不读取输入内容**
+- **快照在错误发生的那一刻取**，不是上报时取（上报可能延迟数秒）
+
+容量由 `maxBreadcrumbs` 控制（默认 20，设为 `0` 关闭）。默认值比 Sentry 的 100 小，是因为要照顾 `sendBeacon` / keepalive 的 60KB 上限。
+
 ## 网络请求的状态码分类
 
 网络日志除了原始 `resStatus`，还带 `statusCategory` 与 `statusMessage` 两个字段，避免下游把一切失败统一渲染成「接口异常」：

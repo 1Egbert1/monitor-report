@@ -43,6 +43,8 @@ export const DEFAULTS = Object.freeze({
   dedupWindow: 5000,
   maskQueryKeys: Object.freeze([]) as readonly string[],
   reportPerformanceOnHiddenOnly: true,
+  // 行为栈容量：Sentry 默认 100，这里取 20 —— 受 keepalive / sendBeacon 60KB 上限约束
+  maxBreadcrumbs: 20,
   requestConfig: Object.freeze({ headers: Object.freeze({}), timeout: 10000 }),
   debug: false
 } as const)
