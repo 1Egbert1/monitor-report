@@ -65,6 +65,41 @@ monitor.getStatus() // 自诊断：{ queued, dropped, failed, disabled }
 monitor.destroy() // 销毁（默认先 flush）
 ```
 
+## 框架集成
+
+SDK 本身不依赖任何框架，框架错误通过适配插件接管。
+
+**Vue 3 / Vue 2**
+
+```ts
+import { vueErrorPlugin } from '@yakult001/monitor-report/vue3' // vue2 用 /vue2
+app.use(vueErrorPlugin, { monitor }) // Vue 2：Vue.use(...)
+```
+
+**React**
+
+React 没有全局错误钩子，官方机制是 Error Boundary。SDK 提供工厂，把 React 传进去即可（避免本包依赖 react）：
+
+```tsx
+import { createErrorBoundary } from '@yakult001/monitor-report/react'
+
+const Boundary = createErrorBoundary(React, monitor)
+
+<Boundary fallback={<ErrorPage />} onError={(err, info) => console.warn(info)}>
+  <App />
+</Boundary>
+```
+
+覆盖范围要说清楚——boundary 只捕获**渲染、构造函数、生命周期**里的错误：
+
+| 场景 | 谁来兜 |
+| --- | --- |
+| 渲染 / 生命周期抛错 | Error Boundary（`errorType: react_error`） |
+| 事件处理器里抛错 | boundary 抓不到，走 `window.onerror`（`js_error`） |
+| 异步代码（Promise / setTimeout） | `unhandledrejection` / `js_error` |
+
+两条路互补，所以 React 项目里**两种都要接**：boundary 拿组件栈，全局通道兜住异步与事件。
+
 ## 日志级别
 
 每条日志带 `level`，取值对齐 Sentry 的 event level（去掉了 `log` 档）：
@@ -121,6 +156,22 @@ createMonitor({
 
 冻结只影响 LCP，CLS / INP 的观测继续运行。
 
+### 每个指标的"终值"定义不同
+
+五个指标不是同一类统计量，采集方式必须分别实现：
+
+| 指标 | 终值怎么算 |
+| --- | --- |
+| FCP | 第一个 `first-contentful-paint` 条目 |
+| LCP | 全部候选中最大的 `startTime`（持续监听，不能拿到首个就断开） |
+| FID | 首次输入的 `processingStart - startTime` |
+| INP | 按 `interactionId` 聚合后取 **98 分位**（不取最大、不取平均） |
+| CLS | **会话窗口**（相邻间隔 >1s 或距窗口开始 >5s 切窗）内的累加值取最大 |
+
+阈值（`good` / `needs-improvement` / `poor`）取自 Web Vitals，**只用于生成 `rating`，绝不用来过滤数据**——「慢」本身就是数据，客户端丢掉就永远不知道有多少人卡在那种状态。
+
+LCP 上报时会带 `lcpElement`（最大内容元素的脱敏选择器），用于回答「是哪个元素慢」；浏览器未提供 `element`（如 bfcache 重放条目）时该字段缺省。
+
 ## 错误上下文：行为栈
 
 错误上报时会附带一段**行为栈**（breadcrumb），用于还原「用户做了什么才触发这个错误」。它不独立上报，只在错误日志里出现：
@@ -150,10 +201,25 @@ createMonitor({
 | `ui.click` | 任意点击 | 元素选择器 / id / class / 文本 / `data-*` |
 | `ui.input` | 表单控件聚焦 | 同上但**不含文本**，只带 `type`（`password` 之类） |
 | `navigation` | 路由变化 | `{ from, to, kind }`，`kind` 为 `pushState` / `replaceState` / `popstate` / `hashchange` |
+| `console` | `console.warn` / `error` / `assert` | 参数经安全序列化（循环引用不抛错）+ 脱敏 |
 
 **路由不需要判断模式**：SDK 把四个来源全接上，把「这次跳转由谁触发」记进 `kind`，history 还是 hash 由报表端自己归类。`from === to` 不记录，query 里的值默认打码（`maskQueryKeys` 可放行指定键）。
 
 容量由 `maxBreadcrumbs` 控制（默认 20，设为 `0` 时连监听都不注册）。默认值比 Sentry 的 100 小，是因为要照顾 `sendBeacon` / keepalive 的 60KB 上限。
+
+### console 只记 warn 及以上
+
+`console.error` / `warn` 是「被 `try/catch` 吞掉的错误」的最后痕迹——这类错误 `window.onerror` 看不到，只能靠行为栈还原。所以默认劫持这三个级别：
+
+```ts
+createMonitor({
+  appId: 'demo',
+  reportUrl: '/api/upload',
+  consoleBreadcrumb: 'warn' // 'off' | 'error' | 'warn'（默认）| 'all'
+})
+```
+
+`log` / `info` / `debug` 默认不记：量大、隐私风险高、排障价值低。参数会先经安全序列化（循环引用、DOM、大对象都有兜底），再过 PII 脱敏，最后截断到 160 字。
 
 ## 网络请求的状态码分类
 

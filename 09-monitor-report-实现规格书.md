@@ -147,7 +147,8 @@ monitor-report/
 │   │       └── index.ts                # createMemoryMonitor() + memoryModule
 │   ├── plugins/
 │   │   ├── vue2.ts
-│   │   └── vue3.ts
+│   │   ├── vue3.ts
+│   │   └── react.ts
 │   ├── utils/
 │   │   ├── mask.ts                     # 脱敏器（D-08）
 │   │   ├── hash.ts                     # 稳定指纹
@@ -288,6 +289,8 @@ export interface PerformanceData {
   startTime: number
   interactionCount?: number
   layoutShiftSources?: string[]
+  /** LCP 最大内容元素的脱敏选择器（浏览器未提供 element 时缺省） */
+  lcpElement?: string
 }
 
 export interface NetworkData {
@@ -656,6 +659,7 @@ Breadcrumb {
 | `ui.click` | `document` 上的 `click`（capture） | 元素选择器、id/class、文本、`data-*`、role、href |
 | `ui.input` | `document` 上的 `focusin`（capture），**仅表单控件** | 同上，但**不含文本**，只带 `type` |
 | `navigation` | `pushState` / `replaceState` / `popstate` / `hashchange` | `from` / `to`（query 脱敏）、`kind`（触发方式） |
+| `console` | 劫持 `console.warn` / `error` / `assert`（可选 `all`） | `level` + 安全序列化后的参数文本 |
 
 判定与约束：
 
@@ -683,6 +687,30 @@ Breadcrumb {
 3. **wrap 而非 replace**：保存原生引用，调用时保持 `this`，teardown 时还原。否则会与 React Router / Vue Router /
    微前端框架（它们也可能 patch `history`）互相覆盖。已知副作用：`history.pushState.toString()` 会变成包装后的源码，
    依赖该字符串做原生性判断的库可能受影响（Sentry 有同样问题）。
+
+**console 采集（`consoleBreadcrumb`）**
+
+价值不在「记录所有日志」，而在覆盖**「被 catch 后只打日志」的错误** —— 这类错误 `window.onerror` 永远看不到，
+是最容易漏的一类。因此：
+
+| 配置 | 劫持范围 | 说明 |
+| --- | --- | --- |
+| `'off'` | 不劫持 | 完全关闭 |
+| `'error'` | `error` / `assert` | 只要错误级 |
+| `'warn'`（默认） | 再加 `warn` | 平衡覆盖与噪声 |
+| `'all'` | 再加 `log` / `info` / `debug` | 量大且隐私风险高，仅排障时临时开 |
+
+硬约束：
+
+1. **只进行为栈，不独立上报**。全量 console 当独立日志上报等于自建噪声源。
+2. **参数必须走 `safeSerialize`**：不能直接 `JSON.stringify` —— 循环引用会抛错、DOM 节点变成 `{}`、大对象撑爆 payload。
+   规则：深度 ≤ 2、对象 ≤ 5 键、数组 ≤ 3 项、单字符串 ≤ 80 字、`Error` 只取 name+message（不带 stack）、
+   函数记 `[Function]`、元素记 `[Element tag]`、循环记 `[Circular]`。
+3. **序列化后过 `maskPiiText`**，并且每条 message 截断 160 字。
+4. **级别映射**：`error`/`assert` → `error`，`warn` → `warning`，`info`/`log` → `info`，`debug` → `debug`。
+5. **合并**：同级别同内容 500ms 内只留一条并累加 `data.count`（库内部循环打日志很常见）。
+6. **跳过自身告警**：首参以 `[monitor-report]` 开头的调用不记录，避免 SDK 自己的 `console.warn` 污染行为栈。
+7. **teardown 还原**：`stop()` 时把每个被劫持的方法还原为原引用，测试断言的是**同一个函数对象**。
 
 
 **归一化与指纹（`normalize.ts`）**
@@ -746,6 +774,8 @@ onEntry(entry):  if (entry.startTime > state.value) { state.value = entry.startT
 禁止在首次 LCP 后上报
 finalize(): 在 visibilitychange(hidden) / pagehide 时读取 state.value 上报终值
 兜底：PERF_REPORT_FALLBACK_MS 定时器，未见隐藏时也上报一次
+lcpElement: 取 state.entry.element 过 nodeSelector()（脱敏），用于定位"是哪个元素慢"；
+           浏览器未提供 element（如 bfcache 重放条目）时字段缺省，不得伪造
 ```
 
 **LCP 冻结（防极端值，与 web-vitals 的 `stopListening` 对齐）**
@@ -861,7 +891,10 @@ window.fetch = function (input, init) { … }   // 必须保留 this 与全部�
 - 该模块**只进 `monitor-report/memory` 子路径**，不进全量入口的默认 `modules`。
 - 边界必须在 JSDoc 中写明：仅 Chromium；数值经量化（约 100KB 粒度）；只覆盖 JS 堆，不含 DOM / CSS / GPU / Worker。
 
-### 7.5 Vue 适配插件（`plugins/`）
+### 7.5 框架适配插件（`plugins/`）
+
+**统一约定：SDK 不 import 任何框架**。插件只使用「最小结构接口」，由宿主把框架实例传进来，
+因此本包保持零框架依赖，测试也不需要安装 vue / react。
 
 **Vue 3（`vue3.ts`）**
 
@@ -880,6 +913,38 @@ export const vueErrorPlugin = {
 **Vue 2（`vue2.ts`）**：同逻辑，挂在 `Vue.config.errorHandler`（`(err, vm, info)`），同样保留并调用 `prev`。
 
 硬约束：**必须保留并调用用户原有的 `errorHandler`**，否则会吞掉业务方自己的错误处理。
+
+**React（`react.ts`）**
+
+React 没有 `errorHandler` 钩子，官方机制是 **Error Boundary**（类组件的 `componentDidCatch`），
+而 boundary 必须 `extends React.Component` —— 所以插件不是常量而是工厂，React 由宿主注入：
+
+```ts
+const Boundary = createErrorBoundary(React, monitor)
+// 用法：<Boundary fallback={<ErrorPage />} onError={fn}>{children}</Boundary>
+
+captureReactError(monitor, error, errorInfo)   // 宿主自己写 boundary 时用
+```
+
+实现要点：
+
+1. 同时实现 `static getDerivedStateFromError()`（渲染阶段标记）与 `componentDidCatch()`（提交阶段上报）。
+2. `fallback` 由宿主用 JSX 创建好传入，SDK **不调用 `createElement`** —— 这是不依赖 react 的关键。
+3. `componentStack` 裁剪到前 10 层后写入 `ErrorData.componentStack`（与堆栈的 10 帧一致）。
+4. **上报与宿主 `onError` 各自 try/catch 包裹**：任何一方抛错都不得冒泡进 React 渲染流程。
+5. `errorType` 为 `react_error`。
+
+**覆盖范围（必须写进文档，避免误以为全量捕获）**
+
+| 场景 | 是否被 boundary 捕获 |
+| --- | --- |
+| 渲染 / 构造函数 / 生命周期方法 | ✅ |
+| 事件处理器（`onClick` 内抛错） | ❌ 不进 boundary，仍走 `window.onerror` |
+| 异步代码（`setTimeout` / Promise 回调） | ❌ 走 `window.onerror` / `unhandledrejection` |
+| 服务端渲染 | ❌ |
+
+也就是说：React 插件补的是「组件树内的错误」，异步与事件错误由 SDK 原有的 `js_error` / `promise_error`
+通道兜住 —— 两者互补，不重叠。
 
 ---
 
@@ -997,8 +1062,8 @@ export default defineConfig({
 
 ```json
 [
-  { "name": "core + error", "path": "dist/error.js", "limit": "8 kB" },
-  { "name": "core + performance", "path": "dist/performance.js", "limit": "8 kB" },
+  { "name": "core + error", "path": "dist/error.js", "limit": "10 kB" },
+  { "name": "core + performance", "path": "dist/performance.js", "limit": "10 kB" },
   { "name": "full", "path": "dist/index.js", "limit": "18 kB" }
 ]
 ```
