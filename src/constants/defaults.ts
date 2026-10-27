@@ -45,6 +45,8 @@ export const DEFAULTS = Object.freeze({
   reportPerformanceOnHiddenOnly: true,
   // 行为栈容量：Sentry 默认 100，这里取 20 —— 受 keepalive / sendBeacon 60KB 上限约束
   maxBreadcrumbs: 20,
+  // console 只记 warn 及以上：log/info/debug 量大且隐私风险高
+  consoleBreadcrumb: 'warn' as const,
   requestConfig: Object.freeze({ headers: Object.freeze({}), timeout: 10000 }),
   debug: false
 } as const)

@@ -49,7 +49,7 @@ export interface Breadcrumb {
 
 /** 错误数据结构。 */
 export interface ErrorData {
-  errorType: 'js_error' | 'promise_error' | 'resource_error' | 'vue_error'
+  errorType: 'js_error' | 'promise_error' | 'resource_error' | 'vue_error' | 'react_error'
   message: string
   stack?: string
   fileName?: string
@@ -59,6 +59,8 @@ export interface ErrorData {
   resourceType?: string
   selector?: string
   crossOrigin?: boolean
+  /** React 组件栈（`errorInfo.componentStack`，裁剪为前 10 层） */
+  componentStack?: string
   /** 错误发生时刻的行为栈快照（最多 maxBreadcrumbs 条，按时间正序） */
   breadcrumbs?: Breadcrumb[]
   count: number
@@ -75,6 +77,8 @@ export interface PerformanceData {
   startTime: number
   interactionCount?: number
   layoutShiftSources?: string[]
+  /** LCP 的最大内容元素（脱敏选择器，仅 LCP 有值）——用于定位"是哪个元素慢" */
+  lcpElement?: string
 }
 
 /** 网络请求结果的语义分类（避免下游把一切失败统一渲染成「接口异常」）。 */

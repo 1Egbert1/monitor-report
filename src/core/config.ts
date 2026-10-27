@@ -67,6 +67,7 @@ export function resolveConfig(user: UserConfig): ResolvedConfig {
     reportPerformanceOnHiddenOnly:
       user.reportPerformanceOnHiddenOnly ?? DEFAULTS.reportPerformanceOnHiddenOnly,
     maxBreadcrumbs: user.maxBreadcrumbs ?? DEFAULTS.maxBreadcrumbs,
+    consoleBreadcrumb: user.consoleBreadcrumb ?? DEFAULTS.consoleBreadcrumb,
     extra: { ...(user.extra ?? {}) },
     tags: { ...(user.tags ?? {}) },
     beforeSend: user.beforeSend,

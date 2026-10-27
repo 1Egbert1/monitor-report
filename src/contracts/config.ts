@@ -39,6 +39,14 @@ export type UserConfig = UserModuleConfig & {
   reportPerformanceOnHiddenOnly?: boolean
   /** 行为栈容量上限（对齐 Sentry 的 maxBreadcrumbs，默认 20）。 */
   maxBreadcrumbs?: number
+  /**
+   * console 行为栈采集范围（不独立上报，只进 breadcrumb）。
+   * - `off`：不劫持 console
+   * - `error`：只记 error / assert
+   * - `warn`（默认）：再加 warn
+   * - `all`：含 log / info / debug（量大且隐私风险高，非排障需要不建议）
+   */
+  consoleBreadcrumb?: 'off' | 'error' | 'warn' | 'all'
   extra?: Record<string, unknown>
   tags?: Record<string, string>
   beforeSend?: (log: ReportLog) => ReportLog | null
@@ -65,6 +73,7 @@ export type ResolvedConfig = Readonly<ResolvedModuleConfig> & {
   readonly maskQueryKeys: readonly string[]
   readonly reportPerformanceOnHiddenOnly: boolean
   readonly maxBreadcrumbs: number
+  readonly consoleBreadcrumb: 'off' | 'error' | 'warn' | 'all'
   readonly extra: Record<string, unknown>
   readonly tags: Record<string, string>
   readonly beforeSend?: (log: ReportLog) => ReportLog | null
