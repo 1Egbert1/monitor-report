@@ -44,6 +44,7 @@ export class ErrorMonitor implements MonitorModule {
       this.watchClicks()
       this.watchInput()
       this.watchNavigation()
+      this.watchConsole()
     }
 
     // 单个定时器扫描全部指纹（禁止每条错误一个定时器）
@@ -87,6 +88,39 @@ export class ErrorMonitor implements MonitorModule {
     }
     document.addEventListener('focusin', onFocusIn, true)
     this.cleanups.push(() => document.removeEventListener('focusin', onFocusIn, true))
+  }
+
+  /**
+   * 记录 console 调用（只进行为栈，不独立上报）。
+   * 价值在于覆盖「被 catch 后只打日志」的错误 —— 这类错误 window.onerror 永远看不到。
+   * 默认只劫持 warn / error / assert；log / info / debug 量大且隐私风险高，需显式配置 'all'。
+   */
+  private watchConsole(): void {
+    const store = this.breadcrumbs
+    const mode = this.ctx?.config.consoleBreadcrumb
+    if (!store || !mode || mode === 'off') return
+    if (typeof console === 'undefined') return
+
+    const base: string[] = mode === 'error' ? ['error', 'assert'] : ['warn', 'error', 'assert']
+    const targets = mode === 'all' ? [...base, 'log', 'info', 'debug'] : base
+
+    for (const level of targets) {
+      const holder = console as unknown as Record<string, unknown>
+      const original = holder[level]
+      if (typeof original !== 'function') continue
+      const originalFn = original as (...args: unknown[]) => void
+      holder[level] = function (this: unknown, ...args: unknown[]): void {
+        // 跳过 SDK 自身的告警，避免自我污染
+        const first = args[0]
+        if (typeof first !== 'string' || !first.startsWith('[monitor-report]')) {
+          store.pushConsole(level, args)
+        }
+        originalFn.apply(this, args)
+      }
+      this.cleanups.push(() => {
+        holder[level] = original
+      })
+    }
   }
 
   /**

@@ -28,6 +28,86 @@ export const FORM_TAGS: ReadonlySet<string> = new Set(['input', 'textarea', 'sel
 /** 路由变化的触发来源（记录事实，不判断应用用的是 history 还是 hash 模式）。 */
 export type NavigationKind = 'pushState' | 'replaceState' | 'popstate' | 'hashchange'
 
+/** 每条 console 行为最多保留的参数个数。 */
+const CONSOLE_ARG_MAX = 2
+
+/** console 行为 message 的总长度上限。 */
+const CONSOLE_MESSAGE_MAX = 160
+
+/** 序列化时的对象深度上限。 */
+const SERIALIZE_DEPTH = 2
+
+/** 对象序列化保留的键数上限。 */
+const SERIALIZE_KEYS = 5
+
+/** 数组序列化保留的元素个数上限。 */
+const SERIALIZE_ITEMS = 3
+
+/** 单个字符串参数截断长度。 */
+const SERIALIZE_STR_MAX = 80
+
+/**
+ * 安全序列化任意值：循环引用不抛错，DOM / 函数 / Error 用占位符，深度与长度双截断。
+ * 不能直接 JSON.stringify —— 循环引用会抛错，DOM 节点会变成 {}，大对象会撑爆 payload。
+ * @param value 待序列化的值
+ * @param depth 当前深度
+ * @param seen 已访问对象集合（防循环）
+ */
+function serializeValue(value: unknown, depth: number, seen: WeakSet<object>): string {
+  if (value === null) return 'null'
+  const type = typeof value
+  if (type === 'undefined') return 'undefined'
+  if (type === 'string') return (value as string).slice(0, SERIALIZE_STR_MAX)
+  if (type === 'number' || type === 'boolean' || type === 'bigint') return String(value)
+  if (type === 'symbol') return String(value)
+  if (type === 'function') return '[Function]'
+
+  const obj = value as object
+  if (seen.has(obj)) return '[Circular]'
+  if (obj instanceof Error) return `${obj.name}: ${obj.message}`
+  if (typeof Element !== 'undefined' && obj instanceof Element) {
+    return `[Element ${obj.localName}]`
+  }
+  if (obj instanceof Date) return obj.toISOString()
+
+  if (depth >= SERIALIZE_DEPTH) {
+    return Array.isArray(obj) ? '[Array]' : '[Object]'
+  }
+
+  seen.add(obj)
+  if (Array.isArray(obj)) {
+    const items = obj.slice(0, SERIALIZE_ITEMS).map((item) => serializeValue(item, depth + 1, seen))
+    const more = obj.length > SERIALIZE_ITEMS ? ', …' : ''
+    return `[${items.join(', ')}${more}]`
+  }
+  const record = obj as Record<string, unknown>
+  const keys = Object.keys(record)
+  const pairs = keys
+    .slice(0, SERIALIZE_KEYS)
+    .map((key) => `${key}: ${serializeValue(record[key], depth + 1, seen)}`)
+  const more = keys.length > SERIALIZE_KEYS ? ', …' : ''
+  return `{${pairs.join(', ')}${more}}`
+}
+
+/**
+ * 对外暴露的安全序列化（测试与调试用）。
+ * @param value 任意值
+ */
+export function safeSerialize(value: unknown): string {
+  return serializeValue(value, 0, new WeakSet<object>())
+}
+
+/**
+ * console 级别 → breadcrumb 级别（对齐 Sentry 的映射）。
+ * @param consoleLevel console 方法名
+ */
+function levelOfConsole(consoleLevel: string): Breadcrumb['level'] {
+  if (consoleLevel === 'error' || consoleLevel === 'assert') return 'error'
+  if (consoleLevel === 'warn') return 'warning'
+  if (consoleLevel === 'debug') return 'debug'
+  return 'info'
+}
+
 /**
  * 把元素描述成结构化数据。
  * 只读元素自身属性，不读取任何输入内容；文本一律过 PII 兜底脱敏。
@@ -198,6 +278,39 @@ export class BreadcrumbStore {
       level: 'info',
       message: `navigate ${maskedFrom} -> ${maskedTo}`,
       data: { from: maskedFrom, to: maskedTo, kind }
+    })
+    this.lastKey = key
+    this.lastAt = now
+  }
+
+  /**
+   * 记录一次 console 调用（不独立上报，只做行为栈）。
+   * 参数经安全序列化 + 截断 + PII 脱敏；同级别同内容在合并窗口内只留一条并累加 count。
+   * @param consoleLevel console 方法名
+   * @param args 原始参数
+   * @param now 当前时间戳
+   */
+  pushConsole(consoleLevel: string, args: unknown[], now: number = Date.now()): void {
+    const text = maskPiiText(args.slice(0, CONSOLE_ARG_MAX).map(safeSerialize).join(' '))
+    const message = `${consoleLevel}: ${text}`.slice(0, CONSOLE_MESSAGE_MAX).trim()
+    const key = `console|${consoleLevel}|${message}`
+
+    if (key === this.lastKey && withinWindow(now, this.lastAt)) {
+      const last = this.items[this.items.length - 1]
+      if (last) {
+        const count = Number(last.data?.count ?? 1) + 1
+        last.data = { ...last.data, count }
+        this.lastAt = now
+        return
+      }
+    }
+
+    this.push({
+      timestamp: now,
+      category: 'console',
+      level: levelOfConsole(consoleLevel),
+      message,
+      data: { level: consoleLevel }
     })
     this.lastKey = key
     this.lastAt = now
