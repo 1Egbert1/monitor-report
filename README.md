@@ -100,6 +100,27 @@ createMonitor({
 })
 ```
 
+## 性能指标的上报时机
+
+五个指标里只有 FID 是「采集即上报」，其余默认都等到页面隐藏时结算——这是为了拿到 LCP / CLS / INP 的**终值**，中途值没有统计意义。
+
+`reportPerformanceOnHiddenOnly: false` 会让「能提前确定的指标」立即上报：
+
+| 指标 | `true`（默认） | `false` |
+| --- | --- | --- |
+| FCP | 隐藏 / 兜底时上报 | **采集即上报** |
+| LCP | 冻结时只记录，隐藏时上报 | **冻结即上报** |
+| FID | 采集即上报 | 采集即上报 |
+| CLS / INP | 隐藏 / 兜底时结算 | 隐藏 / 兜底时结算（累积型指标） |
+
+每个指标**只上报一次**，不会因为切换配置而重复。
+
+### LCP 会在首次交互时冻结
+
+`keydown` / `click` 一旦触发，LCP 观测立即停止（对齐 web-vitals 的 `stopListening`）。原因：LCP 候选的 `startTime` 是距 `timeOrigin` 的毫秒数，用户切到后台停留很久再回来时，浏览器可能再次 paint 并产出 `startTime = 380000` 这样的候选；不冻结就会把它当成最大 LCP 上报，几十万毫秒的假数据会把分位数直接打爆。
+
+冻结只影响 LCP，CLS / INP 的观测继续运行。
+
 ## 网络请求的状态码分类
 
 网络日志除了原始 `resStatus`，还带 `statusCategory` 与 `statusMessage` 两个字段，避免下游把一切失败统一渲染成「接口异常」：

@@ -18,7 +18,12 @@ export class PerformanceMonitor implements MonitorModule {
 
   private ctx: ModuleContext | null = null
   private observers: PerformanceObserver[] = []
+  private lcpObserver: PerformanceObserver | null = null
   private fcp: { value: number } | null = null
+  private fcpReported = false
+  private lcpReported = false
+  private lcpFrozen = false
+  private interactionOffs: Array<() => void> = []
   private fidSent = false
   private lcp = new LcpTracker()
   private cls = new ClsTracker()
@@ -32,6 +37,8 @@ export class PerformanceMonitor implements MonitorModule {
     }
     this.ctx = ctx
     this.observeAll()
+    // 首次交互即冻结 LCP（规格 7.2）：与 web-vitals 的 stopListening 对齐
+    this.watchFirstInteraction()
 
     // 长驻页面兜底：未见隐藏也在 PERF_REPORT_FALLBACK_MS 后结算一次
     this.fallbackTimer = setTimeout(() => {
@@ -62,27 +69,14 @@ export class PerformanceMonitor implements MonitorModule {
       this.fallbackTimer = null
     }
     this.disconnectObservers()
+    this.offInteraction()
 
     const nav = getNavigationType()
     // bfcache 恢复（back_forward）时 FCP / LCP 无意义，不上报；INP / CLS 正常。
     if (nav !== 'back_forward') {
-      if (this.fcp) {
-        this.emitMetric({
-          metricName: 'FCP',
-          value: this.fcp.value,
-          entryType: 'paint',
-          startTime: this.fcp.value
-        })
-      }
-      if (this.lcp.entry) {
-        const value = this.lcp.finalize()
-        this.emitMetric({
-          metricName: 'LCP',
-          value,
-          entryType: 'largest-contentful-paint',
-          startTime: value
-        })
-      }
+      // reportPerformanceOnHiddenOnly=false 时个别指标已在采集/冻结时上报过，这里不重复
+      this.reportFcp()
+      this.reportLcp()
     }
 
     const clsResult = this.cls.finalize()
@@ -115,6 +109,7 @@ export class PerformanceMonitor implements MonitorModule {
   stop(): void {
     // SPEC-GAP: 规格书未把 destroy 列入结算时机；SPA 卸载场景的性能终值依赖页面隐藏/兜底定时器。
     this.disconnectObservers()
+    this.offInteraction()
     if (this.fallbackTimer !== null) {
       clearTimeout(this.fallbackTimer)
       this.fallbackTimer = null
@@ -135,10 +130,80 @@ export class PerformanceMonitor implements MonitorModule {
         })
         obs.observe(spec.init)
         this.observers.push(obs)
+        if (spec.metricName === 'LCP') {
+          this.lcpObserver = obs
+        }
       } catch {
         // 该 entryType 不受支持（如 Safari 早期无 event 类型）：静默降级
       }
     }
+  }
+
+  /**
+   * 监听首次用户交互（keydown / click），触发即冻结 LCP。
+   * capture + once：即使业务代码 stopPropagation 也能收到，且只触发一次。
+   */
+  private watchFirstInteraction(): void {
+    const freeze = (): void => {
+      this.freezeLcp()
+    }
+    const opts: AddEventListenerOptions = { capture: true, once: true }
+    document.addEventListener('keydown', freeze, opts)
+    document.addEventListener('click', freeze, opts)
+    this.interactionOffs.push(() => document.removeEventListener('keydown', freeze, true))
+    this.interactionOffs.push(() => document.removeEventListener('click', freeze, true))
+  }
+
+  /** 移除首次交互监听（幂等）。 */
+  private offInteraction(): void {
+    for (const fn of this.interactionOffs) {
+      fn()
+    }
+    this.interactionOffs = []
+  }
+
+  /**
+   * 冻结 LCP：规范规定首次交互后不应再产生新候选，此后再来的条目一律拒绝。
+   * 这同时挡住「后台标签页停留后回到前台、浏览器再次 paint 出超大 startTime」的极端值。
+   */
+  private freezeLcp(): void {
+    if (this.lcpFrozen) return
+    this.lcpFrozen = true
+    this.disconnectLcpObserver()
+    this.offInteraction()
+    // 不等隐藏的语义下，冻结时刻即为 LCP 终值
+    if (this.ctx && !this.ctx.config.reportPerformanceOnHiddenOnly) {
+      this.reportLcp()
+    }
+  }
+
+  /**
+   * 上报 FCP（只报一次）。
+   */
+  private reportFcp(): void {
+    if (this.fcpReported || !this.fcp) return
+    this.fcpReported = true
+    this.emitMetric({
+      metricName: 'FCP',
+      value: this.fcp.value,
+      entryType: 'paint',
+      startTime: this.fcp.value
+    })
+  }
+
+  /**
+   * 上报 LCP（只报一次）。
+   */
+  private reportLcp(): void {
+    if (this.lcpReported || !this.lcp.entry) return
+    this.lcpReported = true
+    const value = this.lcp.finalize()
+    this.emitMetric({
+      metricName: 'LCP',
+      value,
+      entryType: 'largest-contentful-paint',
+      startTime: value
+    })
   }
 
   /**
@@ -155,7 +220,8 @@ export class PerformanceMonitor implements MonitorModule {
         this.onPaintEntry(entry)
         break
       case 'LCP':
-        this.lcp.onEntry(entry)
+        // 已冻结：首次交互后的候选一律不采纳
+        if (!this.lcpFrozen) this.lcp.onEntry(entry)
         break
       case 'FID':
         this.onFidEntry(entry)
@@ -170,19 +236,14 @@ export class PerformanceMonitor implements MonitorModule {
   }
 
   /**
-   * FCP：只认 first-contentful-paint；关闭隐藏上报开关时采集即上报。
+   * FCP：只认 first-contentful-paint；关闭隐藏上报开关时采集即上报（只报一次）。
    * @param entry paint 条目
    */
   private onPaintEntry(entry: PerformanceEntry): void {
     if (entry.name !== 'first-contentful-paint' || this.fcp) return
     this.fcp = { value: entry.startTime }
     if (this.ctx && !this.ctx.config.reportPerformanceOnHiddenOnly && !this.finalized) {
-      this.emitMetric({
-        metricName: 'FCP',
-        value: entry.startTime,
-        entryType: 'paint',
-        startTime: entry.startTime
-      })
+      this.reportFcp()
     }
   }
 
@@ -227,6 +288,22 @@ export class PerformanceMonitor implements MonitorModule {
       }
     }
     this.observers = []
+    this.lcpObserver = null
+  }
+
+  /**
+   * 只断开 LCP Observer（首次交互冻结时用，CLS / INP 仍需继续观察）。
+   */
+  private disconnectLcpObserver(): void {
+    const obs = this.lcpObserver
+    if (!obs) return
+    try {
+      obs.disconnect()
+    } catch {
+      // 已断开的 Observer 忽略
+    }
+    this.observers = this.observers.filter((item) => item !== obs)
+    this.lcpObserver = null
   }
 }
 

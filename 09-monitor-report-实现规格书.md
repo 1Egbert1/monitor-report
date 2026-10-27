@@ -676,8 +676,8 @@ fingerprint(error):
 
 | 指标 | entryType | Observer 配置 | 上报时机 |
 | --- | --- | --- | --- |
-| FCP | `paint` | `{ type:'paint', buffered:true }`，取 `name === 'first-contentful-paint'` | 采集到即可，但统一在 flush 时发 |
-| LCP | `largest-contentful-paint` | `{ type:'largest-contentful-paint', buffered:true }`，**持续监听** | **页面隐藏 / pagehide / 兜底定时器** |
+| FCP | `paint` | `{ type:'paint', buffered:true }`，取 `name === 'first-contentful-paint'` | 默认 flush 时发；`reportPerformanceOnHiddenOnly:false` 时采集即发 |
+| LCP | `largest-contentful-paint` | `{ type:'largest-contentful-paint', buffered:true }`，**持续监听至冻结** | 首次交互冻结时 / 页面隐藏 / 兜底定时器，**只发一次** |
 | FID | `first-input` | `{ type:'first-input', buffered:true }`，取 `processingStart - startTime` | 采集到即可 |
 | INP | `event` | `{ type:'event', buffered:true, durationThreshold:40 }` | 页面隐藏时结算 |
 | CLS | `layout-shift` | `{ type:'layout-shift', buffered:true }` | 页面隐藏时结算 |
@@ -693,6 +693,31 @@ onEntry(entry):  if (entry.startTime > state.value) { state.value = entry.startT
 finalize(): 在 visibilitychange(hidden) / pagehide 时读取 state.value 上报终值
 兜底：PERF_REPORT_FALLBACK_MS 定时器，未见隐藏时也上报一次
 ```
+
+**LCP 冻结（防极端值，与 web-vitals 的 `stopListening` 对齐）**
+
+首次用户交互（`keydown` / `click`，`capture + once`）触发即冻结：
+
+- 置 `lcpFrozen = true`，此后所有 LCP 候选一律拒绝（`handleEntry` 里先判冻结）；
+- **只断开 LCP Observer**，CLS / INP 的 Observer 必须继续工作；
+- 移除两个交互监听。
+
+为什么必须有这一步：LCP 候选的 `startTime` 是距 `timeOrigin` 的毫秒数。
+用户切到后台标签页停留很久再回来时，浏览器可能再次 paint 并产出 `startTime = 380000` 这类候选；
+若 SDK 此时仍在监听（例如 SDK 晚于用户往返才初始化，`buffered: true` 会把历史候选一并补发），
+取最大值就会上报几十万毫秒的假数据，把分位数打爆。冻结后此类候选不再可能进入。
+**注意**：`visibilitychange(hidden)` 的结算已能挡住主路径（结算后立即断开全部 Observer），
+冻结补的是「首次交互后到隐藏之前」这段窗口。
+
+**`reportPerformanceOnHiddenOnly` 的准确语义**
+
+| 取值 | FCP | LCP | FID | CLS / INP |
+| --- | --- | --- | --- | --- |
+| `true`（默认） | 隐藏 / 兜底时上报 | 冻结时只记录，隐藏 / 兜底时上报 | 采集即上报 | 隐藏 / 兜底时结算 |
+| `false` | **采集即上报** | **冻结即上报** | 采集即上报 | 隐藏 / 兜底时结算 |
+
+- FCP / LCP **只上报一次**（`fcpReported` / `lcpReported` 标记），隐藏结算时不会重复。
+- CLS / INP 属累积型指标，中途值没有统计意义，两种配置下都以页面生命周期为界结算——这一点必须在文档里写明，不要让人误以为 `false` 等于「全部实时」。
 
 **CLS 会话窗口（`cls.ts`）**
 
