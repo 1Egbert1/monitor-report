@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createMonitor } from '../../src/index'
+import { PERFORMANCE_OBSERVER_CONFIGS } from '../../src/modules/performance/observers'
 import { ensureDist } from '../helpers/distBuild'
 import { MockPerformanceObserver } from '../setup'
 
@@ -37,7 +38,8 @@ describe('AC-04 所有 Observer 带 buffered: true', () => {
       reportUrl: 'https://r.example.com/u',
       modules: ['performance']
     })
-    expect(MockPerformanceObserver.instances.length).toBe(5)
+    // 实例数由配置表决定，不写死数字：新增指标时无需改这条断言
+    expect(MockPerformanceObserver.instances.length).toBe(PERFORMANCE_OBSERVER_CONFIGS.length)
     for (const inst of MockPerformanceObserver.instances) {
       expect(inst.init?.buffered).toBe(true)
     }

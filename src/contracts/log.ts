@@ -70,7 +70,7 @@ export interface ErrorData {
 
 /** 性能类日志承载数据。 */
 export interface PerformanceData {
-  metricName: 'FCP' | 'LCP' | 'FID' | 'INP' | 'CLS'
+  metricName: 'FCP' | 'LCP' | 'FID' | 'INP' | 'CLS' | 'LT' | 'FPS'
   value: number
   rating: 'good' | 'needs-improvement' | 'poor'
   entryType: string
@@ -79,6 +79,14 @@ export interface PerformanceData {
   layoutShiftSources?: string[]
   /** LCP 的最大内容元素（脱敏选择器，仅 LCP 有值）——用于定位"是哪个元素慢" */
   lcpElement?: string
+  /** Long Task 个数（仅 LT 有值） */
+  longTaskCount?: number
+  /** 最长单个 Long Task 的时长 ms（仅 LT 有值） */
+  maxLongTaskDuration?: number
+  /** 掉帧率（0-1，仅 FPS 有值）——比平均 FPS 更能反映卡顿 */
+  fpsDropRate?: number
+  /** 最长单帧间隔 ms（仅 FPS 有值）——定位最卡的时刻 */
+  maxFrameDuration?: number
 }
 
 /** 网络请求结果的语义分类（避免下游把一切失败统一渲染成「接口异常」）。 */

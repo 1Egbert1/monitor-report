@@ -11,7 +11,7 @@ const DEFAULT_MODULES: ModuleType[] = ['error', 'performance']
  */
 export const MODULE_DEFAULTS: Readonly<ResolvedModuleConfig> = Object.freeze({
   error: Object.freeze({}),
-  performance: Object.freeze({ clsReportThreshold: 0 }),
+  performance: Object.freeze({ clsReportThreshold: 0, fpsEnabled: false, fpsSampleDurationMs: 10000 }),
   network: Object.freeze({ collectResourceTiming: false }),
   memory: Object.freeze({
     interval: 30000,

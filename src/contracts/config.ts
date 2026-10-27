@@ -10,7 +10,13 @@ export type ModuleType = Exclude<LogType, 'custom'>
  */
 export interface ModuleConfigMap {
   error: Record<string, never>
-  performance: { clsReportThreshold: number }
+  performance: {
+    clsReportThreshold: number
+    /** 是否采集 FPS（默认 false：rAF 持续运行会阻止低功耗模式，按需开启） */
+    fpsEnabled: boolean
+    /** FPS 采样时长 ms（默认 10000） */
+    fpsSampleDurationMs: number
+  }
   network: { collectResourceTiming: boolean }
   memory: { interval: number; reportOnlyOnGrowth: boolean; growthThresholdPerMinute: number }
 }

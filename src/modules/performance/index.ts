@@ -3,12 +3,16 @@ import type { MonitorModule, ModuleContext } from '../../contracts/emitter'
 import { defineModule } from '../../contracts/emitter'
 import type { LogType, PerformanceData } from '../../contracts/log'
 import { getRating } from '../../constants/thresholds'
+import type { ObservedMetricName } from '../../constants/thresholds'
 import { PERF_REPORT_FALLBACK_MS } from '../../constants/defaults'
 import { getNavigationType } from '../../utils/time'
+import { assertNever } from '../../utils/never'
 import { PERFORMANCE_OBSERVER_CONFIGS } from './observers'
 import { LcpTracker } from './lcp'
 import { ClsTracker, type LayoutShiftLike } from './cls'
 import { InpTracker, type InpEntryLike } from './inp'
+import { LongTaskTracker, type LongTaskLike } from './longtask'
+import { FpsTracker } from './fps'
 
 /**
  * 性能监控模块：reportPerformanceOnHiddenOnly（默认）时除 FID 外全部在隐藏时结算上报。
@@ -28,6 +32,12 @@ export class PerformanceMonitor implements MonitorModule {
   private lcp = new LcpTracker()
   private cls = new ClsTracker()
   private inp = new InpTracker()
+  private lt = new LongTaskTracker()
+  private fps = new FpsTracker()
+  private fpsRafId = 0
+  private fpsReported = false
+  private fpsStart = 0
+  private fpsTeardown: (() => void) | null = null
   private finalized = false
   private fallbackTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -39,6 +49,7 @@ export class PerformanceMonitor implements MonitorModule {
     this.observeAll()
     // 首次交互即冻结 LCP（规格 7.2）：与 web-vitals 的 stopListening 对齐
     this.watchFirstInteraction()
+    this.startFps(ctx)
 
     // 长驻页面兜底：未见隐藏也在 PERF_REPORT_FALLBACK_MS 后结算一次
     this.fallbackTimer = setTimeout(() => {
@@ -70,6 +81,9 @@ export class PerformanceMonitor implements MonitorModule {
     }
     this.disconnectObservers()
     this.offInteraction()
+    // FPS 独立结算：页面隐藏时 rAF 会停止，此时采样结束
+    this.fps.pause()
+    this.reportFps()
 
     const nav = getNavigationType()
     // bfcache 恢复（back_forward）时 FCP / LCP 无意义，不上报；INP / CLS 正常。
@@ -101,6 +115,19 @@ export class PerformanceMonitor implements MonitorModule {
         interactionCount: inpResult.count
       })
     }
+
+    // LT 与 CLS / INP 同为累积型，只在生命周期末结算一次；无长任务时不报 0
+    const ltResult = this.lt.finalize()
+    if (ltResult) {
+      this.emitMetric({
+        metricName: 'LT',
+        value: ltResult.value,
+        entryType: 'longtask',
+        startTime: performanceTimelineNow(),
+        longTaskCount: ltResult.count,
+        maxLongTaskDuration: ltResult.maxDuration
+      })
+    }
   }
 
   /**
@@ -110,6 +137,7 @@ export class PerformanceMonitor implements MonitorModule {
     // SPEC-GAP: 规格书未把 destroy 列入结算时机；SPA 卸载场景的性能终值依赖页面隐藏/兜底定时器。
     this.disconnectObservers()
     this.offInteraction()
+    this.stopFps()
     if (this.fallbackTimer !== null) {
       clearTimeout(this.fallbackTimer)
       this.fallbackTimer = null
@@ -208,12 +236,83 @@ export class PerformanceMonitor implements MonitorModule {
   }
 
   /**
+   * FPS 采样：rAF 打点、按秒分桶。
+   * fpsEnabled 默认关闭——rAF 持续运行会阻止浏览器进入低功耗模式，移动端有电量影响。
+   */
+  private startFps(ctx: ModuleContext): void {
+    const { fpsEnabled, fpsSampleDurationMs } = ctx.config.performance
+    if (!fpsEnabled || typeof requestAnimationFrame !== 'function') return
+
+    this.fpsStart = performanceTimelineNow()
+    this.fps.start(this.fpsStart)
+
+    const tick = (now: number): void => {
+      this.fps.onFrame(now)
+      // 达到采样时长即结算，不必等页面隐藏：FPS 在加载期最有价值
+      if (!this.fpsReported && now - this.fpsStart >= fpsSampleDurationMs) {
+        this.reportFps()
+      }
+      if (this.fpsRafId !== 0) {
+        this.fpsRafId = requestAnimationFrame(tick)
+      }
+    }
+    this.fpsRafId = requestAnimationFrame(tick)
+
+    // 页面隐藏时 rAF 会停止：必须暂停，否则切后台 30 秒回来会算出假的极低 FPS
+    const onVis = (): void => {
+      if (document.hidden) {
+        this.fps.pause()
+      } else {
+        this.fps.resume(performanceTimelineNow())
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
+    this.fpsTeardown = (): void => {
+      document.removeEventListener('visibilitychange', onVis)
+      if (this.fpsRafId !== 0) {
+        cancelAnimationFrame(this.fpsRafId)
+        this.fpsRafId = 0
+      }
+    }
+  }
+
+  /**
+   * 上报 FPS（只报一次）。
+   */
+  private reportFps(): void {
+    if (this.fpsReported || !this.ctx) return
+    this.fpsReported = true
+    // 结算后立即停掉 rAF，避免无意义的持续运行阻止低功耗模式
+    this.stopFps()
+    const result = this.fps.finalize()
+    if (!result) return
+    this.emitMetric({
+      metricName: 'FPS',
+      value: result.avgFps,
+      entryType: 'rAF',
+      startTime: performanceTimelineNow(),
+      fpsDropRate: result.dropRate,
+      maxFrameDuration: result.maxFrameDuration
+    })
+  }
+
+  /**
+   * 停止 rAF 循环并移除 visibilitychange 监听（幂等）。
+   */
+  private stopFps(): void {
+    if (this.fpsTeardown) {
+      this.fpsTeardown()
+      this.fpsTeardown = null
+    }
+  }
+
+  /**
    * 按指标分发条目。
    * @param metric 指标名
    * @param entry 原始条目
    */
   private handleEntry(
-    metric: PerformanceData['metricName'],
+    metric: ObservedMetricName,
     entry: PerformanceEntry
   ): void {
     switch (metric) {
@@ -233,6 +332,13 @@ export class PerformanceMonitor implements MonitorModule {
       case 'CLS':
         this.cls.onEntry(entry as unknown as LayoutShiftLike)
         break
+      case 'LT':
+        // 长任务：只看时长，不关心来源（attribution 各浏览器支持度差）
+        this.lt.onEntry(entry as unknown as LongTaskLike)
+        break
+      default:
+        // metricName 扩容而漏加分支时，编译期在此报错（而非运行时静默丢弃）
+        assertNever(metric)
     }
   }
 

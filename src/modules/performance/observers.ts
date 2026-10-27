@@ -1,12 +1,12 @@
 // 各指标 Observer 配置表（规格书 7.2）：全部 buffered: true（禁止事项 3，漏掉即指标永久丢失）。
-import type { PerformanceData } from '../../contracts/log'
+import type { ObservedMetricName } from '../../constants/thresholds'
 
 /** event 观察器配置（lib.dom 未含 durationThreshold，需扩展）。 */
 export type PerfObserverInit = PerformanceObserverInit & { durationThreshold?: number }
 
-/** 指标 → Observer 配置。 */
+/** 指标 → Observer 配置（不含 FPS：它走 rAF，不走 PerformanceObserver）。 */
 export interface PerfObserverSpec {
-  metricName: PerformanceData['metricName']
+  metricName: ObservedMetricName
   entryType: string
   init: PerfObserverInit
 }
@@ -25,5 +25,7 @@ export const PERFORMANCE_OBSERVER_CONFIGS: ReadonlyArray<PerfObserverSpec> = [
     entryType: 'event',
     init: { type: 'event', buffered: true, durationThreshold: 40 }
   },
-  { metricName: 'CLS', entryType: 'layout-shift', init: { type: 'layout-shift', buffered: true } }
+  { metricName: 'CLS', entryType: 'layout-shift', init: { type: 'layout-shift', buffered: true } },
+  // 诊断指标：长任务（>50ms）。不是 Core Web Vital，只用于定位卡顿来源。
+  { metricName: 'LT', entryType: 'longtask', init: { type: 'longtask', buffered: true } }
 ]
