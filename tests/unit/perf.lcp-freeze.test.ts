@@ -21,9 +21,10 @@ function values(emitted: ReturnType<typeof makeModuleCtx>['emitted'], metric: st
     .map((d) => d.value)
 }
 
-/** 触发一次隐藏结算。 */
+/** 触发一次隐藏结算（必须保持方法调用形式，否则 this 丢失）。 */
 function settle(module: ReturnType<typeof createPerformanceMonitor>): void {
-  ;(module as unknown as { onPageHidden?: () => void }).onPageHidden?.()
+  const target = module as unknown as { onPageHidden?: () => void }
+  target.onPageHidden?.()
 }
 
 describe('LCP 首次交互冻结', () => {
