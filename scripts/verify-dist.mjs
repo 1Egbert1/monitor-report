@@ -51,6 +51,41 @@ for (const file of bundleFiles) {
   }
 }
 
+// sourceMappingURL 与 .map 必须成对。
+// 单向约束：允许「有 map 无引用」（publish 前会剥离注释），
+// 不允许「有引用无 map」——浏览器会去请求不存在的文件并报 404，比不提供 sourcemap 更糟。
+const MAP_REF_RE = /\/\/# sourceMappingURL=([^\r\n\s'"]+)/
+
+for (const file of bundleFiles) {
+  const source = fs.readFileSync(path.join(dist, file), 'utf8')
+  const match = source.match(MAP_REF_RE)
+  if (!match) continue
+  const mapName = match[1]
+  const mapPath = path.join(dist, mapName)
+  if (!fs.existsSync(mapPath)) {
+    errors.push(`${file} 引用了不存在的 sourcemap ${mapName}`)
+    continue
+  }
+  let map
+  try {
+    map = JSON.parse(fs.readFileSync(mapPath, 'utf8'))
+  } catch {
+    errors.push(`${mapName} 不是合法 JSON`)
+    continue
+  }
+  if (map.version !== 3) {
+    errors.push(`${mapName} 的 version 应为 3，实际为 ${map.version}`)
+  }
+  const sourceCount = (map.sources || []).length
+  const contentCount = (map.sourcesContent || []).length
+  if (contentCount !== 0 && contentCount !== sourceCount) {
+    errors.push(`${mapName} 的 sourcesContent(${contentCount}) 与 sources(${sourceCount}) 数量不一致`)
+  }
+  if (map.file && map.file !== file) {
+    errors.push(`${mapName} 的 file 字段为 ${map.file}，与引用方 ${file} 不匹配`)
+  }
+}
+
 const entryCount = Object.keys(pkg.exports || {}).filter((k) => k !== './package.json').length
 
 if (errors.length > 0) {

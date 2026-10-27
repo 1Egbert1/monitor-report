@@ -5,7 +5,10 @@
   "type": "module",
   "sideEffects": false,
   "files": [
-    "dist",
+    "dist/*.js",
+    "dist/*.cjs",
+    "dist/*.d.ts",
+    "dist/*.d.cts",
     "README.md"
   ],
   "main": "./dist/index.cjs",
@@ -58,7 +61,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "npm run ci",
+    "prepublishOnly": "node scripts/strip-sourcemap-comments.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src tests --ext .ts",
     "test": "vitest run",
