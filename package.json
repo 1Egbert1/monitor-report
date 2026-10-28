@@ -75,11 +75,18 @@
     "postpack": "node scripts/swap-npm-readme.mjs --restore"
   },
   "keywords": [
-    "monitor",
-    "report",
-    "error",
-    "performance",
-    "frontend"
+    "web-vitals",
+    "rum",
+    "apm",
+    "error-tracking",
+    "performance-monitoring",
+    "frontend-monitoring",
+    "observability",
+    "long-task",
+    "inp",
+    "cls",
+    "lcp",
+    "monitoring"
   ],
   "license": "MIT",
   "author": "yakult001",
