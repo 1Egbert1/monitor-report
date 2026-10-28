@@ -100,17 +100,7 @@ describe('maskStackUrlQuery', () => {
 
 function makeBase() {
   return {
-    appId: 'a',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production' as const,
-    timestamp: 1,
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/p',
-    pagePath: '/p',
-    navigationType: 'navigate' as const,
-    ua: 'ua',
-    sessionId: 's'
+    timestamp: 1
   }
 }
 
@@ -119,7 +109,6 @@ describe('maskLog', () => {
     const log: NetworkLog = {
       ...makeBase(),
       type: 'network',
-      pageUrl: 'https://example.com/p?secret=1',
       data: {
         reqUrl: 'https://api.example.com/x?token=abc&a=1',
         reqMethod: 'GET',
@@ -131,7 +120,6 @@ describe('maskLog', () => {
     }
     const out = maskLog(log, ['token'])
     expect(out.data.reqUrl).toBe('https://api.example.com/x?token=abc&a=[filtered]')
-    expect(out.pageUrl).toBe('https://example.com/p?secret=[filtered]')
   })
 
   it('对 error 日志的 fileName（完整脚本 URL）做 query 脱敏', () => {

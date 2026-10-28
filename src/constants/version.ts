@@ -6,4 +6,4 @@ declare const __SDK_VERSION__: string
 export const sdkVersion: string = __SDK_VERSION__
 
 /** 上报协议版本，常量 1。 */
-export const schemaVersion = 1
+export const schemaVersion = 2

@@ -159,16 +159,14 @@ function indexOfSibling(el: Element): number {
 }
 
 /**
- * 对单条日志执行管道第 5 步定型脱敏；不递归清洗 extra/tags（宿主责任）。
- * 泛型保留具体日志类型的 data 形状，方便调用方按成员访问。
+ * 对单条日志的 payload 执行管道第 5 步定型脱敏；不递归清洗 extra/tags（宿主责任）。
+ * 公共字段（pageUrl 等）已上移到上报体的 context，在 transport 组装时脱敏，此处不处理。
+ * 泛型保留具体日志类型的 payload 形状，方便调用方按成员访问。
  * @param log 待脱敏日志
  * @param keepKeys query 值保留白名单
  */
 export function maskLog<T extends ReportLog>(log: T, keepKeys: readonly string[]): T {
   const masked = { ...log } as T
-  masked.pageUrl = maskUrlQuery(typeof log.pageUrl === 'string' ? log.pageUrl : '', keepKeys)
-  masked.pagePath = maskPiiText(typeof log.pagePath === 'string' ? log.pagePath : '')
-
   const data: Record<string, unknown> = {}
   for (const key of Object.keys(log.data)) {
     data[key] = maskValue(key, (log.data as Record<string, unknown>)[key], keepKeys)

@@ -4,51 +4,94 @@
     <meta charset="utf-8" />
     <title>monitor-report 演示页</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 24px; }
+      body { font-family: system-ui, sans-serif; margin: 24px; max-width: 960px; }
       button { margin: 4px 8px 4px 0; padding: 8px 14px; cursor: pointer; }
       h1 { font-size: 20px; }
+      h2 { font-size: 15px; margin-top: 22px; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
       #log { white-space: pre-wrap; background: #f6f6f6; padding: 12px; font-size: 12px; min-height: 80px; }
+      .cfg { background: #eef6ff; border: 1px solid #b6d4fe; padding: 8px 12px; font-size: 13px; border-radius: 4px; }
+      .hint { color: #666; font-size: 12px; margin: 6px 0; }
+      #stage { position: relative; height: 44px; background: #fafafa; border: 1px dashed #ccc; margin-top: 8px; overflow: hidden; }
+      #box { position: absolute; top: 8px; left: 0; width: 28px; height: 28px; background: #4a90d9; border-radius: 4px; }
     </style>
   </head>
   <body>
     <h1>monitor-report 演示页</h1>
-    <p>页面 URL 带 query（secret=abc123），用于验证上报体 query 脱敏。</p>
-    <div>
-      <button id="btn-js-error">触发 JS 错误</button>
-      <button id="btn-js-error2">触发另一个 JS 错误</button>
-      <button id="btn-promise">触发 Promise 拒绝</button>
-      <button id="btn-fetch-ok">fetch 200</button>
-      <button id="btn-fetch-404">fetch 404</button>
-      <button id="btn-xhr">XHR 请求</button>
-      <button id="btn-custom">自定义日志</button>
-      <button id="btn-flush">立即上报</button>
-      <button id="btn-status">刷新状态</button>
-    </div>
-    <h2>监控状态</h2>
+    <p class="cfg" id="cfg">初始化中…</p>
+    <p class="hint">
+      页面 URL 带 query（<code>?secret=abc123</code>）用于验证脱敏；加 <code>?transport=image</code>
+      可切到像素信标模式（GET + 1×1 gif）。
+    </p>
+
+    <h2>错误采集</h2>
+    <button id="btn-js-error">JS 错误（随机）</button>
+    <button id="btn-js-error2">JS 错误（固定消息，验证去重）</button>
+    <button id="btn-promise">Promise 未处理</button>
+    <button id="btn-resource">资源错误（图片 404）</button>
+
+    <h2>网络采集（验证 statusCategory）</h2>
+    <button id="btn-fetch-ok">200 success</button>
+    <button id="btn-fetch-401">401 unauthorized</button>
+    <button id="btn-fetch-404">404 not_found</button>
+    <button id="btn-fetch-500">500 server_error</button>
+    <button id="btn-timeout">超时（服务端不响应）</button>
+    <button id="btn-xhr">XHR 200</button>
+
+    <h2>性能采集</h2>
+    <button id="btn-longtask">触发长任务（阻塞 120ms → LT）</button>
+    <button id="btn-fps">启动 FPS 动画</button>
+    <div id="stage"><div id="box"></div></div>
+    <p class="hint">
+      LT / FPS 是累积型指标，<strong>切到其他标签页再切回来</strong>（或关闭页面）才会结算上报。
+      FPS 需要先开动画，否则没有帧可采。
+    </p>
+
+    <h2>工具</h2>
+    <button id="btn-custom">自定义日志</button>
+    <button id="btn-flush">立即上报</button>
+    <button id="btn-status">刷新状态</button>
+
+    <h2>状态</h2>
     <pre id="log">尚未初始化</pre>
 
     <script src="/dist/index.global.js"></script>
     <script>
       var monitor = null
+      var fpsTimer = null
 
       function log(text) {
         document.getElementById('log').textContent += text + '\n'
       }
+
+      // image 模式：GET + 1×1 gif（服务端已支持 /api/upload?d=）
+      var transport = new URLSearchParams(location.search).get('transport') === 'image' ? 'image' : 'fetch'
 
       window.addEventListener('DOMContentLoaded', function () {
         monitor = window.MonitorReport.createMonitor({
           appId: 'demo-web-001',
           reportUrl: '/api/upload',
           env: 'test',
-          modules: ['error', 'performance', 'network'],
-          release: 'demo-0.0.1',
+          // memory 模块在 Chromium 才有数据，其他浏览器会静默降级
+          modules: ['error', 'performance', 'network', 'memory'],
+          release: 'demo-0.0.2',
           debug: true,
           debounceTime: 1500,
-          dedupWindow: 2000
+          dedupWindow: 2000,
+          transport: transport,
+          // 超时验证：客户端 3s 未响应即判 timeout
+          requestConfig: { timeout: 3000 },
+          performance: {
+            // FPS 默认关闭，演示页打开以便验证
+            fpsEnabled: true,
+            fpsSampleDurationMs: 5000
+          }
         })
         monitor.setTag('page', 'demo')
-        log('初始化完成 appId=demo-web-001')
+        document.getElementById('cfg').textContent =
+          'transport=' + transport + ' · modules=error,performance,network,memory · fps=on(5s) · timeout=3s'
+        log('初始化完成 appId=demo-web-001 transport=' + transport)
 
+        // ---- 错误 ----
         document.getElementById('btn-js-error').addEventListener('click', function () {
           throw new Error('demo js error ' + Date.now())
         })
@@ -56,20 +99,69 @@
           throw new TypeError('demo type error 固定消息供聚合')
         })
         document.getElementById('btn-promise').addEventListener('click', function () {
-          // 不写 catch：触发 unhandledrejection 通道
           void Promise.reject(new Error('demo unhandled promise'))
         })
-        document.getElementById('btn-fetch-ok').addEventListener('click', function () {
-          fetch('/api/data').catch(function () {})
+        document.getElementById('btn-resource').addEventListener('click', function () {
+          var img = new Image()
+          img.style.display = 'none'
+          img.src = '/no-such-image-' + Date.now() + '.png'
+          // 必须挂到文档树：未插入 DOM 的元素祖先链为空，error 事件不会经过 window，
+          // 而 SDK 是在 window 的捕获阶段监听资源错误的
+          document.body.appendChild(img)
         })
-        document.getElementById('btn-fetch-404').addEventListener('click', function () {
-          fetch('/api/not-exist').catch(function () {})
+
+        // ---- 网络 ----
+        function hit(path) {
+          fetch(path).catch(function () {})
+        }
+        document.getElementById('btn-fetch-ok').addEventListener('click', function () { hit('/api/data') })
+        document.getElementById('btn-fetch-401').addEventListener('click', function () { hit('/api/unauthorized') })
+        document.getElementById('btn-fetch-404').addEventListener('click', function () { hit('/api/not-exist') })
+        document.getElementById('btn-fetch-500').addEventListener('click', function () { hit('/api/product/3') })
+        document.getElementById('btn-timeout').addEventListener('click', function () {
+          // fetch 没有原生 timeout，只能用 XHR 的 timeout 事件触发
+          // （fetch + AbortSignal.timeout 会抛 AbortError，SDK 当前判为 aborted）
+          var xhr = new XMLHttpRequest()
+          xhr.open('GET', '/api/hang')
+          xhr.timeout = 2000
+          xhr.send()
         })
         document.getElementById('btn-xhr').addEventListener('click', function () {
           var xhr = new XMLHttpRequest()
           xhr.open('GET', '/api/data')
           xhr.send()
         })
+
+        // ---- 性能 ----
+        document.getElementById('btn-longtask').addEventListener('click', function () {
+          var until = performance.now() + 120
+          while (performance.now() < until) {
+            /* 同步阻塞 120ms，触发 >50ms 的 Long Task */
+          }
+          log('已阻塞 120ms（切标签页后 LT 结算）')
+        })
+
+        document.getElementById('btn-fps').addEventListener('click', function () {
+          var box = document.getElementById('box')
+          if (fpsTimer !== null) {
+            cancelAnimationFrame(fpsTimer)
+            fpsTimer = null
+            document.getElementById('btn-fps').textContent = '启动 FPS 动画'
+            log('FPS 动画已停止')
+            return
+          }
+          var x = 0
+          function tick() {
+            x = (x + 3) % 400
+            box.style.transform = 'translateX(' + x + 'px)'
+            fpsTimer = requestAnimationFrame(tick)
+          }
+          fpsTimer = requestAnimationFrame(tick)
+          document.getElementById('btn-fps').textContent = '停止 FPS 动画'
+          log('FPS 动画已启动（5s 后结算）')
+        })
+
+        // ---- 工具 ----
         document.getElementById('btn-custom').addEventListener('click', function () {
           monitor.addReport('custom', { event: 'button_click', at: Date.now() })
           log('已提交 custom 日志')

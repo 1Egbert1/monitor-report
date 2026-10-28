@@ -47,6 +47,8 @@ export const DEFAULTS = Object.freeze({
   maxBreadcrumbs: 20,
   // console 只记 warn 及以上：log/info/debug 量大且隐私风险高
   consoleBreadcrumb: 'warn' as const,
+  // 上报方式：fetch 有回执可重试；image 是 GET 像素信标（跨域免配置但无回执）
+  transport: 'fetch' as const,
   requestConfig: Object.freeze({ headers: Object.freeze({}), timeout: 10000 }),
   debug: false
 } as const)
@@ -71,6 +73,12 @@ export const STACK_MAX_FRAMES = 10
 
 /** keepalive / sendBeacon 体积上限（官方 64KB，留余量）。 */
 export const BEACON_MAX_BYTES = 60000
+
+/**
+ * image 信标模式的 URL 长度上限（保守取 2000 字节）。
+ * 浏览器本身可到 8KB，但中间代理常见 2–4KB 截断；超长会导致服务端解析失败且无感知。
+ */
+export const IMAGE_MAX_URL_BYTES = 2000
 
 /** 本期不采集请求体内容（隐私）。 */
 export const XHR_BODY_PREVIEW_MAX = 0

@@ -62,8 +62,7 @@ describe('LogReport 生命周期', () => {
   })
 
   it('destroy() 后不再接收上报，重复 destroy 不抛错', () => {
-    const monitor = new LogReport({
-      appId: 'a',
+    const monitor = new LogReport({ appId: 'a',
       reportUrl: 'https://r.example.com/u'
     })
     monitor.addReport('custom', { n: 1 })
@@ -74,8 +73,7 @@ describe('LogReport 生命周期', () => {
   })
 
   it('destroy({ flush: false }) 不触发 flush', () => {
-    const monitor = new LogReport({
-      appId: 'a',
+    const monitor = new LogReport({ appId: 'a',
       reportUrl: 'https://r.example.com/u'
     })
     monitor.addReport('custom', { n: 1 })
@@ -86,8 +84,7 @@ describe('LogReport 生命周期', () => {
 
   it('isBrowser() 为 false 时不抛错且不上报', () => {
     vi.stubGlobal('window', undefined)
-    const monitor = new LogReport({
-      appId: 'a',
+    const monitor = new LogReport({ appId: 'a',
       reportUrl: 'https://r.example.com/u'
     })
     expect(monitor.getStatus()).toEqual({ queued: 0, dropped: 0, failed: 0, disabled: true })

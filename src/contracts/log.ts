@@ -7,26 +7,67 @@
 export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 
 /** 所有日志共有的基础字段。 */
+/** 导航类型（Navigation Timing）。 */
+export type NavigationType = 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown'
+
+/**
+ * 单条日志骨架：只放「这条特有」的字段。
+ * 公共信息（哪个应用、什么设备、哪个页面、哪次会话）由上报体的
+ * `appInfo` / `deviceInfo` / `pageInfo` / `sessionInfo` 承载，不再逐条重复。
+ */
 export interface LogBase {
-  appId: string
   type: LogType
+  /** 事件发生时刻（毫秒时间戳）。有 performance 事件起点时用 `timeOrigin + startTime` 换算，更精确。 */
+  timestamp: number
   /** 严重级别：由采集侧按确定性规则推导（见各模块 levelOf），beforeSend 可覆写。 */
   level?: LogLevel
-  schemaVersion: number
+}
+
+/** 应用信息：哪个应用在上报。 */
+export interface AppInfo {
+  appId: string
   sdkVersion: string
   env: 'production' | 'development' | 'test'
-  timestamp: number
-  timeOriginCorrected: number
-  pageUrl: string
-  pagePath: string
-  navigationType: 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown'
+  release?: string
+}
+
+/** 设备信息：什么浏览器 / 什么 UA。 */
+export interface DeviceInfo {
   ua: string
+}
+
+/** 页面信息：哪个页面、怎么进来的。 */
+export interface PageInfo {
+  url: string
+  path: string
+  navigationType: NavigationType
+}
+
+/** 会话信息：哪次会话、哪个用户、哪条链路。 */
+export interface SessionInfo {
   sessionId: string
   userId?: string
-  release?: string
   traceId?: string
+}
+
+/**
+ * 上报体（一次请求一批）。
+ * 每块名字即内容：appInfo=哪个应用、deviceInfo=什么设备、pageInfo=哪个页面、
+ * sessionInfo=哪次会话、logs=具体日志。整批共享的信息只存一份。
+ */
+export interface ReportPayload {
+  schemaVersion: number
+  /** 批次发出时刻（毫秒时间戳） */
+  sentAt: number
+  appInfo: AppInfo
+  deviceInfo: DeviceInfo
+  pageInfo: PageInfo
+  sessionInfo: SessionInfo
+  /** 宿主自定义标签（字符串键值，用于聚合筛选） */
   tags?: Record<string, string>
+  /** 宿主自定义数据（任意结构，不参与聚合） */
   extra?: Record<string, unknown>
+  logs: ReportLog[]
 }
 
 /** 错误类日志承载数据。 */

@@ -38,9 +38,9 @@ const server = createServer((req, res) => {
       let parsed = null
       try {
         parsed = JSON.parse(body)
-        const types = [...new Set((parsed.samples ?? []).map((s) => s.type))].join(',')
+        const types = [...new Set((parsed.logs ?? []).map((s) => s.type))].join(',')
         console.log(
-          `[report] appId=${parsed.appId} sdk=${parsed.sdkVersion} samples=${parsed.samples?.length ?? 0} types=${types} pageUrl=${parsed.pageUrl}`
+          `[report] appId=${parsed.appInfo?.appId} sdk=${parsed.appInfo?.sdkVersion} logs=${parsed.logs?.length ?? 0} types=${types} pageUrl=${parsed.pageInfo?.url}`
         )
         appendFile(LOG_FILE, body + '\n', 'utf8').catch(() => {})
       } catch {
@@ -52,6 +52,31 @@ const server = createServer((req, res) => {
     return
   }
 
+  // image 模式（像素信标）：GET /api/upload?d=<encodeURIComponent(JSON)>
+  // 浏览器发的是 no-cors 请求，必须返回一张真实图片，否则 onerror 触发但 SDK 无从感知
+  if (url.pathname === '/api/upload' && req.method === 'GET') {
+    const GIF_1X1 = Buffer.from(
+      'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7',
+      'base64'
+    )
+    const raw = url.searchParams.get('d') // URLSearchParams 已自动 decode
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw)
+        const types = [...new Set((parsed.logs ?? []).map((s) => s.type))].join(',')
+        console.log(
+          `[report:image] logs=${parsed.logs?.length ?? 0} types=${types} pageUrl=${parsed.pageInfo?.url}`
+        )
+        appendFile(LOG_FILE, raw + '\n', 'utf8').catch(() => {})
+      } catch {
+        console.log('[report:image] invalid json: ' + raw.slice(0, 120))
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store' })
+    res.end(GIF_1X1)
+    return
+  }
+
   if (url.pathname === '/api/data') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end('{"code":0,"data":[1,2,3]}')
@@ -60,6 +85,16 @@ const server = createServer((req, res) => {
   if (url.pathname === '/api/not-exist') {
     res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end('{"code":404}')
+    return
+  }
+  if (url.pathname === '/api/unauthorized') {
+    // 验证 statusCategory: unauthorized（前端最高频事故）
+    res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' })
+    res.end('{"code":401,"msg":"token expired"}')
+    return
+  }
+  if (url.pathname === '/api/hang') {
+    // 永不响应：用于验证超时（客户端 requestConfig.timeout 生效）与 statusCategory: timeout
     return
   }
 

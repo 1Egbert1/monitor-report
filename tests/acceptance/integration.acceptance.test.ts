@@ -20,8 +20,8 @@ function makeFetchCapture() {
   return { bodies, fetchMock }
 }
 
-function samplesOf(body: Record<string, unknown> | undefined): ReportLog[] {
-  return (body?.samples as ReportLog[]) ?? []
+function logsOf(body: Record<string, unknown> | undefined): ReportLog[] {
+  return (body?.logs as ReportLog[]) ?? []
 }
 
 describe('性能终态集成（AC-05 / AC-06）', () => {
@@ -69,7 +69,7 @@ describe('性能终态集成（AC-05 / AC-06）', () => {
     setVisibilityState('hidden')
     document.dispatchEvent(new Event('visibilitychange'))
 
-    const lcp = samplesOf(lastBody()).find(
+    const lcp = logsOf(lastBody()).find(
       (s) => s.type === 'performance' && (s.data as PerformanceData).metricName === 'LCP'
     )
     expect(lcp).toBeDefined()
@@ -83,7 +83,7 @@ describe('性能终态集成（AC-05 / AC-06）', () => {
     setVisibilityState('hidden')
     document.dispatchEvent(new Event('visibilitychange'))
 
-    const cls = samplesOf(lastBody()).find(
+    const cls = logsOf(lastBody()).find(
       (s) => s.type === 'performance' && (s.data as PerformanceData).metricName === 'CLS'
     )
     expect(cls).toBeDefined()
@@ -134,7 +134,7 @@ describe('上报体脱敏与透传（AC-11 / AC-12）', () => {
     const raw = JSON.stringify(body)
     expect(raw).not.toContain('abc123')
     expect(raw).not.toContain('hunter2')
-    const netSample = (body.samples as ReportLog[])[0] as { data: NetworkData }
+    const netSample = (body.logs as ReportLog[])[0] as { data: NetworkData }
     expect(netSample.data.reqUrl).toContain('token=keepme')
     expect(netSample.data.reqUrl).toContain('password=[filtered]')
   })
@@ -179,7 +179,7 @@ describe('Vue 插件集成（AC-14）', () => {
     await Promise.resolve()
     await Promise.resolve()
     const body = bodies[0]
-    const errLog = samplesOf(body).find((s) => s.type === 'error')
+    const errLog = logsOf(body).find((s) => s.type === 'error')
     expect(errLog).toBeDefined()
     expect((errLog?.data as ErrorData | undefined)?.errorType).toBe('vue_error')
     monitor.destroy()

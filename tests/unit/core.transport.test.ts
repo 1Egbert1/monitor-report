@@ -7,19 +7,21 @@ import type { CustomLog } from '../../src/contracts/log'
 
 function makeLog(message = 'x'): CustomLog {
   return {
-    appId: 'a',
     type: 'custom',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production',
     timestamp: 1,
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/',
-    pagePath: '/',
-    navigationType: 'navigate',
-    ua: 'ua',
-    sessionId: 's',
     data: { message }
+  }
+}
+
+function makeContext() {
+  return {
+    deviceInfo: { ua: 'test-ua' },
+    pageInfo: {
+      url: 'https://example.com/p?secret=[filtered]',
+      path: '/p',
+      navigationType: 'navigate' as const
+    },
+    sessionInfo: { sessionId: 'sess-1' }
   }
 }
 
@@ -31,7 +33,7 @@ function makeTransport(requestOverrides: Record<string, unknown> = {}) {
     ...requestOverrides
   })
   const counters: RuntimeCounters = { sampledOut: 0, dropped: 0, failed: 0 }
-  return { config, counters, transport: new Transport(config, counters, () => 'https://example.com/p?secret=1') }
+  return { config, counters, transport: new Transport(config, counters, makeContext) }
 }
 
 describe('Transport', () => {
@@ -53,10 +55,12 @@ describe('Transport', () => {
     expect(headers['Content-Type']).toBe('application/json')
     expect(headers['X-Token']).toBe('abc')
     const payload = JSON.parse(String(init.body)) as Record<string, unknown>
-    expect(payload.appId).toBe('a')
-    expect(payload.schemaVersion).toBe(1)
-    expect(payload.pageUrl).toBe('https://example.com/p?secret=[filtered]')
-    expect(Array.isArray(payload.samples)).toBe(true)
+    expect(payload.schemaVersion).toBe(2)
+    expect((payload.appInfo as Record<string, unknown>).appId).toBe('a')
+    expect((payload.pageInfo as Record<string, unknown>).url).toBe(
+      'https://example.com/p?secret=[filtered]'
+    )
+    expect(Array.isArray(payload.logs)).toBe(true)
   })
 
   it('非 2xx 与网络异常均返回 false', async () => {

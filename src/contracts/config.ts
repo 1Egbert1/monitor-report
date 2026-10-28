@@ -27,6 +27,14 @@ export type ResolvedModuleConfig = { [K in ModuleType]: ModuleConfigMap[K] }
 /** 用户可传的模块配置（逐模块全部可选）。 */
 export type UserModuleConfig = { [K in ModuleType]?: Partial<ModuleConfigMap[K]> }
 
+/**
+ * 上报传输方式。
+ * - `fetch`（默认）：POST + 可读回执，能重试；
+ * - `image`：GET 像素信标，跨域无需服务端配 CORS，但**读不到响应**（无法重试），
+ *   且数据只能进 URL query（受长度限制）、不能带自定义请求头。
+ */
+export type TransportKind = 'fetch' | 'image'
+
 /** 用户可传入的配置（全部可选，appId 必填）。 */
 export type UserConfig = UserModuleConfig & {
   appId: string
@@ -58,6 +66,8 @@ export type UserConfig = UserModuleConfig & {
   beforeSend?: (log: ReportLog) => ReportLog | null
   request?: (logs: ReportLog[]) => void | Promise<void>
   unloadRequest?: (logs: ReportLog[]) => void
+  /** 上报传输方式，默认 `fetch`。 */
+  transport?: TransportKind
   requestConfig?: { headers?: Record<string, string>; timeout?: number }
   debug?: boolean
 }
@@ -85,6 +95,7 @@ export type ResolvedConfig = Readonly<ResolvedModuleConfig> & {
   readonly beforeSend?: (log: ReportLog) => ReportLog | null
   readonly request?: (logs: ReportLog[]) => void | Promise<void>
   readonly unloadRequest?: (logs: ReportLog[]) => void
+  readonly transport: TransportKind
   readonly requestConfig: { headers: Readonly<Record<string, string>>; timeout: number }
   readonly debug: boolean
 }

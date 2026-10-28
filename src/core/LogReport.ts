@@ -1,6 +1,7 @@
 // 核心主类：唯一状态持有者。配置合并、数据管道、上报调度、生命周期（规格书 6.6）。
-import type { LogDataOf, LogType, CustomLog } from '../contracts/log'
+import type { LogDataOf, LogType, CustomLog, ReportPayload } from '../contracts/log'
 import type { UserConfig } from '../contracts/config'
+import { maskUrlQuery, maskPiiText } from '../utils/mask'
 import type { ModuleContext, ModuleRegistry, MonitorModule } from '../contracts/emitter'
 import { behaviorsOf } from '../contracts/emitter'
 import { isBrowser } from './env'
@@ -89,7 +90,7 @@ export class LogReport {
       getSessionId: () => this.sessionId,
       lazyPush: this.config.lazyReport ? (raw) => this.rawQueue.push(raw) : undefined
     })
-    this.transport = new Transport(this.config, this.counters, () => pageSnapshot().url)
+    this.transport = new Transport(this.config, this.counters, () => this.buildSharedInfo())
     this.scheduler = new Scheduler({
       queue: this.queue,
       transport: this.transport,
@@ -262,25 +263,38 @@ export class LogReport {
   }
 
   /**
+   * 构造一批日志共享的信息：设备 / 页面 / 会话 + 宿主自定义标签与数据。
+   * 这些字段整批只存一份，不在每条日志上重复。
+   */
+  private buildSharedInfo(): Omit<
+    ReportPayload,
+    'schemaVersion' | 'sentAt' | 'appInfo' | 'logs'
+  > {
+    const page = pageSnapshot()
+    return {
+      deviceInfo: { ua: this.ua },
+      pageInfo: {
+        url: maskUrlQuery(page.url, this.config.maskQueryKeys),
+        path: maskPiiText(page.path),
+        navigationType: this.navigationType
+      },
+      sessionInfo: {
+        sessionId: this.sessionId,
+        userId: this.userId,
+        traceId: this.traceId
+      },
+      tags: { ...this.config.tags, ...this.tags },
+      extra: { ...this.config.extra, ...this.extra }
+    }
+  }
+
+  /**
    * 构造 logs_dropped 通知（custom 类型，附加到批次末尾）。
    * @param count 被丢弃条数
    */
   private makeDroppedLog(count: number): CustomLog {
     return {
-      ...buildLogBase(
-        {
-          config: this.config,
-          sessionId: this.sessionId,
-          navigationType: this.navigationType,
-          ua: this.ua,
-          userId: this.userId,
-          traceId: this.traceId,
-          tags: this.tags,
-          extra: this.extra
-        },
-        pageSnapshot(),
-        0
-      ),
+      ...buildLogBase(),
       type: 'custom',
       // 队列丢弃属需要关注的信号，固定 warning（不受 custom 默认 info 影响）
       level: 'warning',

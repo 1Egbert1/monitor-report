@@ -42,18 +42,8 @@ function build(user = {}) {
 
 function makeNotice(count: number): CustomLog {
   return {
-    appId: 'a',
     type: 'custom',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production',
     timestamp: Date.now(),
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/p',
-    pagePath: '/p',
-    navigationType: 'navigate',
-    ua: 'test-ua',
-    sessionId: 's',
     data: { event: 'logs_dropped', count }
   }
 }

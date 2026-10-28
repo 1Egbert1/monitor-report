@@ -11,18 +11,8 @@ import type { CustomLog, ErrorData, NetworkLog, ReportLog } from '../../src/cont
 
 function makeNotice(count: number): CustomLog {
   return {
-    appId: 'a',
     type: 'custom',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production',
     timestamp: 0,
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/',
-    pagePath: '/',
-    navigationType: 'navigate',
-    ua: 'ua',
-    sessionId: 's',
     data: { event: 'logs_dropped', count }
   }
 }
@@ -126,14 +116,9 @@ describe('Pipeline', () => {
     const seen = beforeSend.mock.calls[0]?.[0] as NetworkLog | undefined
     expect(seen).toBeDefined()
     if (seen === undefined) return
-    expect(seen.appId).toBe('a')
-    expect(seen.schemaVersion).toBe(1)
-    expect(seen.sdkVersion).toBe('1.0.0')
-    expect(seen.pagePath).toBe('/p')
-    expect(seen.pageUrl).toBe('https://example.com/p?a=[filtered]')
+    // 公共字段（appId / pageUrl / sessionId 等）已上移到上报体的 context，
+    // 由 transport 组装与验证；此处只断言样本特有字段
     expect(seen.data.reqUrl).toBe('https://api.example.com/x?token=[filtered]')
-    expect(seen.sessionId).toBe('sess-1')
-    expect(seen.ua).toBe('test-ua')
   })
 
   it('beforeSend 返回 null 时丢弃', () => {

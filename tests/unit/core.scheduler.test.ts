@@ -8,36 +8,16 @@ import type { CustomLog, ReportLog } from '../../src/contracts/log'
 
 function makeNotice(count: number): CustomLog {
   return {
-    appId: 'a',
     type: 'custom',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production',
     timestamp: 0,
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/',
-    pagePath: '/',
-    navigationType: 'navigate',
-    ua: 'ua',
-    sessionId: 's',
     data: { event: 'logs_dropped', count }
   }
 }
 
 function makeLog(id: number): ReportLog {
   return {
-    appId: 'a',
     type: 'custom',
-    schemaVersion: 1,
-    sdkVersion: '1.0.0',
-    env: 'production',
     timestamp: id,
-    timeOriginCorrected: 0,
-    pageUrl: 'https://example.com/',
-    pagePath: '/',
-    navigationType: 'navigate',
-    ua: 'ua',
-    sessionId: 's',
     data: { id }
   }
 }

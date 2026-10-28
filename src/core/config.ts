@@ -73,6 +73,7 @@ export function resolveConfig(user: UserConfig): ResolvedConfig {
     beforeSend: user.beforeSend,
     request: user.request,
     unloadRequest: user.unloadRequest,
+    transport: user.transport ?? DEFAULTS.transport,
     requestConfig: {
       headers: { ...(user.requestConfig?.headers ?? {}) },
       timeout: user.requestConfig?.timeout ?? DEFAULTS.requestConfig.timeout

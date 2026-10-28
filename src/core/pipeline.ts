@@ -4,9 +4,8 @@ import type { LogBase, LogDataOf, LogLevel, LogType, ReportLog } from '../contra
 import type { ModuleType, ResolvedConfig } from '../contracts/config'
 import type { ModuleBehavior } from '../contracts/emitter'
 import type { NavigationType } from '../utils/time'
-import { correctedNow } from '../utils/time'
+import { eventTimestamp } from '../utils/time'
 import { maskLog, containsPii } from '../utils/mask'
-import { schemaVersion, sdkVersion } from '../constants/version'
 import { DEFAULT_LEVEL_BY_TYPE } from '../constants/defaults'
 import type { ReportQueue } from './queue'
 
@@ -62,33 +61,14 @@ export interface PipelineDeps {
 }
 
 /**
- * 构造公共字段（LogBase 除 type/data 外的部分）。
- * @param input 公共字段来源
- * @param page 页面快照
- * @param entryStartTime 事件起点（用于 timeOrigin 校正）
+ * 构造单条日志骨架（timestamp）。
+ * 公共字段（appId、pageUrl 等）不在单条日志上，由上报体的 appInfo / deviceInfo / pageInfo /
+ * sessionInfo 统一承载，避免一批日志里每条都重复一份。
+ * @param entryStartTime 事件在 performance 时间轴上的起点；无对应条目传 undefined
  */
-export function buildLogBase(
-  input: BaseFieldInput,
-  page: PageSnapshot,
-  entryStartTime: number
-): Omit<LogBase, 'type'> {
+export function buildLogBase(entryStartTime?: number): Omit<LogBase, 'type'> {
   return {
-    appId: input.config.appId,
-    schemaVersion,
-    sdkVersion,
-    env: input.config.env,
-    timestamp: Date.now(),
-    timeOriginCorrected: correctedNow(entryStartTime),
-    pageUrl: page.url,
-    pagePath: page.path,
-    navigationType: input.navigationType,
-    ua: input.ua,
-    sessionId: input.sessionId,
-    userId: input.userId,
-    release: input.config.release,
-    traceId: input.traceId,
-    tags: { ...input.config.tags, ...input.tags },
-    extra: { ...input.config.extra, ...input.extra }
+    timestamp: eventTimestamp(entryStartTime)
   }
 }
 
@@ -145,7 +125,7 @@ export class Pipeline {
     if (out === null) return
 
     if (config.debug) {
-      warnPiiInHostFields(out)
+      warnPiiInHostFields(this.deps.getCommon())
     }
 
     // 7 入队（lazyReport 时缓存原始对，等 startReport 重走管道）
@@ -157,30 +137,15 @@ export class Pipeline {
   }
 
   /**
-   * 构造完整日志（公共字段 + data + level）。
+   * 构造完整日志（timestamp + data + level）。
    * @param type 日志类型
    * @param data 数据类型化数据
    * @param level 严重级别
    */
   private buildLog<T extends LogType>(type: T, data: LogDataOf<T>, level: LogLevel): ReportLog {
-    const { config } = this.deps
-    const common = this.deps.getCommon()
     // SPEC-GAP: 泛型 type 无法直接收窄为联合成员，构建后经 unknown 断言为 ReportLog。
     return {
-      ...buildLogBase(
-        {
-          config,
-          sessionId: this.deps.getSessionId(),
-          navigationType: this.deps.getNavigationType(),
-          ua: this.deps.getUa(),
-          userId: common.userId,
-          traceId: common.traceId,
-          tags: common.tags,
-          extra: common.extra
-        },
-        this.deps.getPageSnapshot(),
-        this.entryStartOf(type, data)
-      ),
+      ...buildLogBase(this.entryStartOf(type, data)),
       type,
       data,
       level
@@ -197,24 +162,24 @@ export class Pipeline {
   }
 
   /**
-   * 取该类型日志对应的 performance 事件起点（用于 timeOrigin 校正）。
-   * 由模块描述符声明，未声明者取 0（校正退化为相对 timeOrigin 的偏移）。
+   * 取该类型日志对应的 performance 事件起点。
+   * 由模块描述符声明；未声明者返回 undefined（timestamp 退回 Date.now()）。
    * @param type 日志类型
    * @param data 数据类型化数据
    */
-  private entryStartOf<T extends LogType>(type: T, data: LogDataOf<T>): number {
-    return this.deps.behaviors[type]?.startTimeOf?.(data) ?? 0
+  private entryStartOf<T extends LogType>(type: T, data: LogDataOf<T>): number | undefined {
+    return this.deps.behaviors[type]?.startTimeOf?.(data)
   }
 }
 
 /**
  * debug 模式下检测宿主字段（extra/tags）中的 PII 并打印 warning。
  * extra/tags/custom 不递归清洗，属宿主责任（规格书第 9 章）。
- * @param log 待上报日志
+ * @param host 上下文里的宿主字段（extra/tags 上移到上报体 context，不在单条日志上）
  */
-function warnPiiInHostFields(log: ReportLog): void {
+function warnPiiInHostFields(host: CommonContext): void {
   try {
-    const payload = JSON.stringify({ extra: log.extra, tags: log.tags })
+    const payload = JSON.stringify({ extra: host.extra, tags: host.tags })
     if (payload && containsPii(payload)) {
       console.warn(
         '[monitor-report] PII detected in extra/tags; host is responsible for sanitizing these fields'
