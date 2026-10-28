@@ -70,7 +70,9 @@
     "verify:dist": "node scripts/verify-dist.mjs",
     "ci": "npm run lint && npm run typecheck && npm run check:entries && npm run test && npm run build && npm run verify:dist && npm run size",
     "gen:entries": "node scripts/gen-entries.mjs",
-    "check:entries": "node scripts/gen-entries.mjs --check"
+    "check:entries": "node scripts/gen-entries.mjs --check",
+    "prepack": "node scripts/swap-npm-readme.mjs",
+    "postpack": "node scripts/swap-npm-readme.mjs --restore"
   },
   "keywords": [
     "monitor",
