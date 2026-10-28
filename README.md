@@ -101,7 +101,11 @@ monitor.destroy() // 销毁（默认先 flush）
 
 ![monitor-report 数据流架构](assets/architecture.svg)
 
-从采集到上报是一条**单向数据流**，`core/pipeline.ts` 是它的中枢：
+从采集到上报是一条**单向数据流**，`core/pipeline.ts` 是它的中枢。
+
+图中 `emitter.emit(type, data)` 那一条是**模块进入核心的唯一通道**：模块只能 emit 数据，不能直接访问 `queue` / `transport`，也不能自己发请求。这条约束保证了**所有数据都必须经过管道的校验 / 采样 / 去重 / 脱敏 / 过滤**，不存在绕开管道的旁路。
+
+> 这里没有采用「订阅中心 + 回调数组」的事件总线：分发是**按 `LogType` 一对一直接路由**（`type` 本身就是路由键），不是一对多广播。消费者只有 `pipeline` 一个，加订阅表只会多一层遍历。
 
 #### 三类采集入口
 
@@ -523,6 +527,30 @@ export default defineNuxtPlugin(() => {
 ### 自定义传输（request）
 
 配置 `request: (logs) => ...` 会**完全替换**内置传输逻辑（不再走队列重试）。此模式下失去内置卸载兜底，请同时提供 `unloadRequest`，否则卸载时的批次会被跳过并计入 dropped 计数。
+
+### 像素信标（image）上报
+
+`transport: 'image'` 会把上报改成 `new Image()` 发 GET：
+
+```ts
+createMonitor({ appId: 'demo', reportUrl: '/api/upload', transport: 'image' })
+```
+
+这个 GET 是 `no-cors` 模式——**不需要服务端返回 `Access-Control-Allow-Origin`**，也不需要预检。数据能送到。
+
+**适用场景**：服务端无法配置 CORS，或 `fetch` / `sendBeacon` 都不可用的环境。
+
+**三个必须知道的限制**：
+
+| 限制 | 影响 |
+| --- | --- |
+| **只能 GET** | 数据进 URL query，上限 2000 字节。**按条分批发送**（接近上限就发一批），单条仍超长时截断 `stack` 到 500 字符 |
+| **读不到响应** | 无法判断成败、**不重试**，只能乐观计为已发送 |
+| **不能带自定义 header** | 鉴权靠 cookie 或 URL 参数（`extra: { token }` 会随体放在上报体顶层） |
+
+**关于超长处理**：不会按字节切 JSON 分片——分片需要服务端实现重组协议，而 SDK 单方面拆会让服务端把 3 个分片当成 3 条残缺数据。所以这里按**条**拆批：每条请求都是一份完整数据，服务端不需要任何配合。只有单条自身就超长时，才截断 `stack`（保留 `type` / `message` / `level` 等核心字段），截断后仍超长才丢弃并计入 `dropped`。
+
+因为 URL 长度受限，image 模式适合**低频、小体积**的上报；大流量场景请用默认的 `fetch`。
 
 ## 关于 sourcemap
 

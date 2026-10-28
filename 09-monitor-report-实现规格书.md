@@ -245,24 +245,30 @@ export type LogOf<T extends LogType> = LogBase & { type: T; data: LogDataMap[T] 
 export type ReportLog = { [K in LogType]: LogOf<K> }[LogType]
 
 export interface LogBase {
-  appId: string
   type: LogType
-  schemaVersion: number
+  /** 事件发生时刻（毫秒）。有 performance 事件起点时用 timeOrigin + startTime 换算 */
+  timestamp: number
+  level?: LogLevel
+}
+
+export interface AppInfo {
+  appId: string
   sdkVersion: string
   env: 'production' | 'development' | 'test'
-  timestamp: number
-  timeOriginCorrected: number
-  level?: LogLevel
-  pageUrl: string
-  pagePath: string
-  navigationType: 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown'
+  release?: string
+}
+export interface DeviceInfo {
   ua: string
+}
+export interface PageInfo {
+  url: string
+  path: string
+  navigationType: 'navigate' | 'reload' | 'back_forward' | 'prerender' | 'unknown'
+}
+export interface SessionInfo {
   sessionId: string
   userId?: string
-  release?: string
   traceId?: string
-  tags?: Record<string, string>
-  extra?: Record<string, unknown>
 }
 
 export interface ErrorData {
@@ -580,8 +586,9 @@ export type LogLevel = 'fatal' | 'error' | 'warning' | 'info' | 'debug'
 
 - 上报体的**顶层结构固定**为：
   ```json
-  { "appId": "…", "sdkVersion": "…", "schemaVersion": 1, "sentAt": 1727000000000,
-    "pageUrl": "…", "samples": [ /* ReportLog[] */ ] }
+  { "schemaVersion": 2, "sentAt": 1727000000000,
+    "appInfo": { … }, "deviceInfo": { … }, "pageInfo": { … }, "sessionInfo": { … },
+    "tags": { … }, "extra": { … }, "logs": [ /* ReportLog[] */ ] }
   ```
   鉴权 token 若需随体传递，放在顶层 `token` 字段（由 `extra` 或 `requestConfig` 指定，不得写死在 header 里唯一的通路）。
 - `requestConfig.headers` 只作用于 ① 常规上报与 ②-A keepalive 路径；文档中必须写明 sendBeacon 降级路径不带 header。
@@ -1003,30 +1010,36 @@ captureReactError(monitor, error, errorInfo)   // 宿主自己写 boundary 时�
 
 | 字段 | 类型 | 来源 |
 | --- | --- | --- |
-| `appId` | string | 配置 |
+**单条日志（`logs[]` 的成员）**
+
+| 字段 | 类型 | 来源 |
+| --- | --- | --- |
 | `type` | LogType | 采集方 |
-| `schemaVersion` | number | 常量 `1` |
-| `sdkVersion` | string | 构建期注入 |
-| `env` | string | 配置 |
-| `timestamp` | number | `Date.now()` |
-| `timeOriginCorrected` | number | `Date.now() - Math.round(performance.timeOrigin + entry.startTime)`，用于校正客户端时钟偏差 |
-| `pageUrl` | string | 采集时刻快照（已脱敏） |
-| `pagePath` | string | `pathname + hash`（不含 query） |
-| `navigationType` | string | Navigation Timing |
-| `ua` | string | `navigator.userAgent` |
-| `sessionId` | string | 每次页面加载随机生成（`Math.random().toString(36)` × 2 拼接） |
-| `userId?` / `release?` / `traceId?` / `tags?` / `extra?` | — | 由宿主设置 |
+| `timestamp` | number | 事件发生时刻：有 performance 事件起点时 `timeOrigin + startTime`，否则 `Date.now()` |
+| `level?` | LogLevel | 采集侧按确定性规则推导 |
+| `data` | 对应类型 | 见 8.1 的 LogDataMap |
+
+**整批共享（上报体顶层，一次请求只存一份）**
+
+| 块 | 字段 | 来源 |
+| --- | --- | --- |
+| `appInfo` | `appId` / `sdkVersion` / `env` / `release?` | 配置 + 构建期注入 |
+| `deviceInfo` | `ua` | `navigator.userAgent` |
+| `pageInfo` | `url`（已脱敏）/ `path`（`pathname + hash`）/ `navigationType` | 采集时刻快照 |
+| `sessionInfo` | `sessionId` / `userId?` / `traceId?` | 页面加载时生成；宿主可设 |
+| `tags?` / `extra?` | — | 由宿主设置 |
 
 ### 8.2 上报体
 
 ```json
 {
-  "appId": "project-web-001",
-  "sdkVersion": "1.0.0",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "sentAt": 1727000000000,
-  "pageUrl": "https://example.com/path?a=[filtered]",
-  "samples": [ { "type": "error", "data": { } } ]
+  "appInfo": { "appId": "project-web-001", "sdkVersion": "1.0.0", "env": "production" },
+  "deviceInfo": { "ua": "Mozilla/5.0 …" },
+  "pageInfo": { "url": "https://example.com/path?a=[filtered]", "path": "/path", "navigationType": "navigate" },
+  "sessionInfo": { "sessionId": "e0tggmbb6t0fjm7hyw4pc" },
+  "logs": [ { "type": "error", "timestamp": 1727000000000, "level": "error", "data": { } } ]
 }
 ```
 

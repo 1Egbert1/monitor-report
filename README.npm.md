@@ -89,6 +89,7 @@ monitor.destroy()              // 销毁（默认先 flush）
 | `maskQueryKeys` | 需要脱敏的 URL 查询参数 |
 | `beforeSend` | 上报前改写 / 丢弃日志 |
 | `request` / `unloadRequest` | 自定义传输（替换内置逻辑） |
+| `transport` | 上报方式：`fetch`（默认，POST 有回执）/ `image`（GET 像素信标，跨域免配置但无回执） |
 | `performance.fpsEnabled` | 采集 FPS（默认关，`fpsSampleDurationMs` 控制时长） |
 | `network.collectResourceTiming` | 采集资源耗时 |
 
